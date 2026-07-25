@@ -1,0 +1,8 @@
+config.json
+crm_telotengo.db
+__pycache__/
+*.env
+node_modules/
+.wwebjs_auth/
+.wwebjs_cache/
+*.html

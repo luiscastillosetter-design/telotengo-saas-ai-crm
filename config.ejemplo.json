@@ -1,0 +1,19 @@
+{
+    "crm_password": "TU_CONTRASEÑA_AQUI",
+    "meta": {
+        "token": "PEGA_AQUI_TU_TOKEN_DE_META",
+        "phone_number_id": "TU_ID_DE_TELEFONO",
+        "verify_token": "TU_TOKEN_DE_VERIFICACION"
+    },
+    "openai": {
+        "api_key": "PEGA_AQUI_TU_API_KEY_OPENAI",
+        "model": "gpt-3.5-turbo"
+    },
+    "negocio": {
+        "nombre": "Nombre de tu Empresa",
+        "promesa_principal": "Tu promesa de valor 360",
+        "tono_voz": "Profesional y persuasivo",
+        "enlace_citas": "https://calendly.com/tu-enlace",
+        "prompt_maestro": "Eres el asesor de ventas de la empresa..."
+    }
+}
