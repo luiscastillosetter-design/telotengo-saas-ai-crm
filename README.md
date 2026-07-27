@@ -1,40 +1,29 @@
-# 🚀 Telotengo AI Command Center & WhatsApp Closer
+# ¡Hola, soy Luis Castillo! 👋
 
-El ecosistema de Inteligencia Artificial 360° diseñado para automatizar la prospección, filtrar leads y cerrar ventas en piloto automático a través de WhatsApp. Desarrollado por **Telotengo Solutions**.
+### 🚀 Sales Architect & Digital Solutions Specialist | Fundador de Telotengo Solutions
 
----
-
-## 🧠 ¿Qué es este sistema?
-Este software integra un servidor backend inteligente impulsado por **Claude (Anthropic)** para responder de manera natural, fluida y persuasiva a los prospectos en WhatsApp, conectado a un panel de control visual en **Streamlit** (Command Center) para la gestión total de clientes potenciales y flujos de ventas.
+Soy un especialista en desarrollo web, automatización de marketing y creación de ecosistemas de Inteligencia Artificial orientados a la conversión y el cierre de ventas de alto nivel. Me apasiona construir herramientas robustas, eficientes y automatizadas que resuelven problemas reales de negocio.
 
 ---
 
-## ✨ Características Principales
-* **🤖 Cerebro IA Persuasivo:** Configurado con un prompt maestro de ventas para calificar prospectos, rebatir objeciones bajo la metodología *Done-For-You* y entregar enlaces de agendamiento de forma automática.
-* **🛡️ Modo Seguro Anti-Ban:** Incorpora pausas aleatorias inteligentes entre mensajes para proteger la línea de WhatsApp de bloqueos o suspensiones por automatización.
-* **📊 Command Center Visual:** Un panel en Streamlit para supervisar las interacciones y el estado de los prospectos de manera limpia y organizada.
-* **⚡ Arquitectura Liviana:** Diseñado con Node.js y Python para desplegarse ágilmente tanto en entornos locales como en servidores dedicados.
+### 🛠️ Stack Tecnológico & Herramientas
+
+* **Lenguajes y Backend:** Python, Flask, JavaScript, Node.js
+* **Inteligencia Artificial y NLP:** Groq Cloud (Llama 3), Ollama, Whisper
+* **Bases de Datos & CRM:** SQLite, Google Sheets, AppSheet
+* **Automatización y Flujos:** Make.com, GoHighLevel, n8n, Webhooks de Meta (WhatsApp Cloud API)
+* **Control de Versiones y Despliegue:** Git, GitHub, Cloudflare Tunnels, Porkbun
 
 ---
 
-## 🛠️ Tecnologías Utilizadas
-* **Backend / Motor de WhatsApp:** Node.js (`whatsapp-web.js`, `qrcode-terminal`)
-* **Cerebro de Inteligencia Artificial:** Anthropic SDK (`Claude`)
-* **Panel CRM / Interfaz Visual:** Python (`Streamlit`)
+### 📌 Proyecto Destacado
+
+* **[Telotengo SaaS AI CRM](https://github.com/luiscastillosetter-design/telotengo-saas-ai-crm):** Un ecosistema multi-empresa automatizado para WhatsApp impulsado por Inteligencia Artificial, con gestión de leads en SQLite, control de créditos/tokens por consumo, y un sistema de transcripción de voz local totalmente integrado.
 
 ---
 
-## 📦 Estructura del Repositorio
-* `servidor.py` - Orquestador y lógica del motor de IA.
-* `index.js` - Puente de conexión, manejo de sesión y escucha activa con WhatsApp.
-* `crm_visual.py` - Interfaz gráfica del Command Center.
-* `config.ejemplo.json` - Plantilla de configuración de credenciales.
+### 📊 Estadísticas de Código
 
----
-
-## 💼 Soluciones y Servicios Llave en Mano (Done-For-You)
-¿Eres dueño de negocio o agencia y quieres este sistema instalado y operando en tu empresa sin complicaciones técnicas? 
-
-Nosotros nos encargamos de todo el montaje, la configuración y la personalización a la medida.
-* 🌐 **Sitio Web Oficial:** [telotengosolutions.com](https://telotengosolutions.com)
-* 💬 **Escríbenos directamente:** [WhatsApp de Soporte y Ventas](https://wa.me/17543411559)
+<p align="center">
+  <img src="https://github-readme-stats.vercel.app/api?username=luiscastillosetter-design&show_icons=true&theme=radical&hide_border=true&bg_color=0d1117" alt="Estadísticas de GitHub" />
+</p>

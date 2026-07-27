@@ -419,4 +419,4 @@ if __name__ == "__main__":
     print("==========================================================")
     print("🚀 SERVIDOR TELOTENGO SOLUTIONS (GROQ CLOUD & SOFÍA) LISTO")
     print("==========================================================")
-    app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)
+    app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)git add servidor.py
