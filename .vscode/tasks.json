@@ -1,0 +1,59 @@
+{
+  "version": "2.0.0",
+  "presentation": {
+    "echo": false,
+    "reveal": "always",
+    "focus": false,
+    "panel": "dedicated",
+    "showReuseMessage": false,
+    "clear": true
+  },
+  "tasks": [
+    {
+      "label": "1. Backend IA (Puerto 5000)",
+      "type": "shell",
+      "command": "python servidor.py",
+      "isBackground": true,
+      "presentation": {
+        "group": "telotengo-motores"
+      }
+    },
+    {
+      "label": "2. CRM Visual (Puerto 8501)",
+      "type": "shell",
+      "command": "python -m streamlit run crm_visual.py",
+      "isBackground": true,
+      "presentation": {
+        "group": "telotengo-motores"
+      }
+    },
+    {
+      "label": "3. Tunel Cloudflare Automatizado",
+      "type": "shell",
+      "command": "python enrutador_cloudflare.py && cloudflared tunnel --config \"C:\\Users\\Luis Castillo\\.cloudflared\\config.yml\" run telotengo-bot",
+      "options": {
+        "shell": {
+          "executable": "cmd.exe",
+          "args": ["/d", "/c"]
+        }
+      },
+      "isBackground": true,
+      "presentation": {
+        "group": "telotengo-motores"
+      }
+    },
+    {
+      "label": "🚀 Encender Todo el Ecosistema",
+      "dependsOn": [
+        "1. Backend IA (Puerto 5000)",
+        "2. CRM Visual (Puerto 8501)",
+        "3. Tunel Cloudflare Automatizado"
+      ],
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    }
+  ]
+}

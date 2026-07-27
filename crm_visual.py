@@ -1,20 +1,29 @@
 import streamlit as st
-import sqlite3
 import json
 import os
 import requests
 import csv
 import io
 from datetime import datetime, timedelta
+from dotenv import load_dotenv
 
-# Configuración inicial de la página
+# 1. CARGA DE SEGURIDAD (Regla 13: Apuntamos explícitamente a tu archivo seguridad.env)
+load_dotenv("seguridad.env")
+
+# 2. CONEXIÓN CON EL GESTOR DE BASE DE DATOS CENTRALIZADO
+try:
+    import gestor_basedatos as db
+except ImportError:
+    import db_manager as db  # Respaldo automático
+
+# Configuración inicial de la página web
 st.set_page_config(
     page_title="CRM Telotengo Solutions — SaaS Platform",
     page_icon="🚀",
     layout="wide"
 )
 
-# --- CARGADOR Y GUARDADO DE CONFIGURACIÓN ---
+# --- CARGADOR Y GUARDADO DE CONFIGURACIÓN JSON DE RESPALDO ---
 def cargar_config():
     if os.path.exists('config.json'):
         with open('config.json', 'r', encoding='utf-8') as f:
@@ -30,11 +39,12 @@ def guardar_config(config_data):
 
 config = cargar_config()
 
-# --- SISTEMA DE AUTENTICACIÓN (LOGIN) ---
+# --- SISTEMA DE AUTENTICACIÓN (LOGIN SEGURO DESDE ENV) ---
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
 
-password_sistema = config.get("crm_password", "telotengo2026")
+# Leemos la contraseña desde el archivo seguridad.env (Regla 12)
+password_sistema = os.getenv("CRM_PASSWORD", "telotengo2026")
 
 if not st.session_state.autenticado:
     st.title("🔒 Acceso Restringido — Telotengo SaaS Command Center")
@@ -42,7 +52,7 @@ if not st.session_state.autenticado:
     
     with st.form("form_login"):
         password_ingresada = st.text_input("Contraseña de Acceso", type="password")
-        btn_login = st.form_submit_button("🔓 Ingresar al Plataforma")
+        btn_login = st.form_submit_button("🔓 Ingresar a la Plataforma")
         
         if btn_login:
             if password_ingresada == password_sistema:
@@ -53,194 +63,14 @@ if not st.session_state.autenticado:
                 st.error("Contraseña incorrecta. Inténtalo de nuevo.")
     st.stop()
 
-# --- CONEXIÓN A BASES DE DATOS (LEADS Y EMPRESAS SAAS) ---
-def asegurar_tablas():
-    conn = sqlite3.connect('crm_telotengo.db')
-    cursor = conn.cursor()
-    
-    # Tabla de Leads (Prospectos)
-    cursor.execute('''CREATE TABLE IF NOT EXISTS leads (
-                        telefono TEXT PRIMARY KEY,
-                        nombre TEXT,
-                        estado_calificacion TEXT,
-                        fecha_registro TEXT,
-                        ultima_interaccion TEXT,
-                        historial_chat TEXT
-                    )''')
-    try:
-        cursor.execute("ALTER TABLE leads ADD COLUMN nombre TEXT")
-    except sqlite3.OperationalError:
-        pass
-
-    # Tabla de Empresas SaaS (Tus Clientes Comerciales)
-    cursor.execute('''CREATE TABLE IF NOT EXISTS empresas_saas (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        nombre_empresa TEXT,
-                        telefono_bot TEXT UNIQUE,
-                        saldo_creditos INTEGER,
-                        prompt_maestro TEXT,
-                        fecha_registro TEXT
-                    )''')
-    
-    conn.commit()
-    conn.close()
-
-asegurar_tablas()
-
-# --- FUNCIONES CRUD PARA LEADS ---
-def obtener_leads():
-    if not os.path.exists('crm_telotengo.db'):
-        return []
-    conn = sqlite3.connect('crm_telotengo.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT telefono, nombre, estado_calificacion, fecha_registro, ultima_interaccion FROM leads ORDER BY ultima_interaccion DESC")
-    leads = cursor.fetchall()
-    conn.close()
-    return leads
-
-def obtener_historial_lead(telefono):
-    conn = sqlite3.connect('crm_telotengo.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT historial_chat, estado_calificacion, fecha_registro, nombre FROM leads WHERE telefono = ?", (telefono,))
-    lead = cursor.fetchone()
-    conn.close()
-    return lead
-
-def agregar_mensaje_a_db(telefono, nuevo_mensaje):
-    conn = sqlite3.connect('crm_telotengo.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT historial_chat FROM leads WHERE telefono = ?", (telefono,))
-    row = cursor.fetchone()
-    if row:
-        historial = json.loads(row[0])
-        historial.append(nuevo_mensaje)
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        cursor.execute("UPDATE leads SET historial_chat = ?, ultima_interaccion = ? WHERE telefono = ?", 
-                       (json.dumps(historial, ensure_ascii=False), now, telefono))
-        conn.commit()
-    conn.close()
-
-def registrar_lead_manual(telefono, nombre="", estado="Nuevo Prospecto"):
-    if not telefono:
-        return False, "El teléfono no puede estar vacío."
-    
-    telefono = telefono.strip()
-    if not telefono.startswith("+"):
-        telefono = "+" + telefono
-        
-    nombre = nombre.strip() if nombre else "Sin Nombre"
-        
-    conn = sqlite3.connect('crm_telotengo.db')
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT telefono FROM leads WHERE telefono = ?", (telefono,))
-    if cursor.fetchone():
-        cursor.execute("UPDATE leads SET nombre = ? WHERE telefono = ?", (nombre, telefono))
-        conn.commit()
-        conn.close()
-        return True, f"El número {telefono} ya existía, se actualizó su nombre."
-    
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    historial_inicial = json.dumps([f"Agente: Lead agregado al CRM el {now}."], ensure_ascii=False)
-    
-    cursor.execute("""
-        INSERT INTO leads (telefono, nombre, estado_calificacion, fecha_registro, ultima_interaccion, historial_chat)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (telefono, nombre, estado, now, now, historial_inicial))
-    
-    conn.commit()
-    conn.close()
-    return True, "Lead registrado con éxito."
-
-def editar_lead_en_db(telefono_antiguo, nuevo_telefono, nuevo_nombre, nuevo_estado):
-    if not nuevo_telefono:
-        return False, "El teléfono no puede estar vacío."
-    nuevo_telefono = nuevo_telefono.strip()
-    if not nuevo_telefono.startswith("+"):
-        nuevo_telefono = "+" + nuevo_telefono
-    nuevo_nombre = nuevo_nombre.strip() if nuevo_nombre else "Sin Nombre"
-    
-    conn = sqlite3.connect('crm_telotengo.db')
-    cursor = conn.cursor()
-    try:
-        if nuevo_telefono != telefono_antiguo:
-            cursor.execute("SELECT telefono FROM leads WHERE telefono = ?", (nuevo_telefono,))
-            if cursor.fetchone():
-                conn.close()
-                return False, f"El número {nuevo_telefono} ya pertenece a otro lead."
-        cursor.execute("""
-            UPDATE leads SET telefono = ?, nombre = ?, estado_calificacion = ? WHERE telefono = ?
-        """, (nuevo_telefono, nuevo_nombre, nuevo_estado, telefono_antiguo))
-        conn.commit()
-        conn.close()
-        return True, "¡Contacto actualizado con éxito!"
-    except Exception as e:
-        conn.close()
-        return False, f"Error al actualizar: {e}"
-
-# --- FUNCIONES CRUD PARA EMPRESAS SAAS ---
-def obtener_empresas_saas():
-    conn = sqlite3.connect('crm_telotengo.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, nombre_empresa, telefono_bot, saldo_creditos, prompt_maestro, fecha_registro FROM empresas_saas ORDER BY id DESC")
-    empresas = cursor.fetchall()
-    conn.close()
-    return empresas
-
-def registrar_empresa_saas(nombre, telefono, saldo_inicial, prompt):
-    if not nombre or not telefono:
-        return False, "El nombre y el teléfono son obligatorios."
-    telefono = telefono.strip()
-    if not telefono.startswith("+"):
-        telefono = "+" + telefono
-        
-    conn = sqlite3.connect('crm_telotengo.db')
-    cursor = conn.cursor()
-    try:
-        now = datetime.now().strftime("%Y-%m-%d")
-        cursor.execute("""
-            INSERT INTO empresas_saas (nombre_empresa, telefono_bot, saldo_creditos, prompt_maestro, fecha_registro)
-            VALUES (?, ?, ?, ?, ?)
-        """, (nombre.strip(), telefono, int(saldo_inicial), prompt.strip(), now))
-        conn.commit()
-        conn.close()
-        return True, "¡Empresa registrada exitosamente en la plataforma SaaS!"
-    except sqlite3.IntegrityError:
-        conn.close()
-        return False, f"El teléfono {telefono} ya está asociado a otra empresa en el sistema."
-    except Exception as e:
-        conn.close()
-        return False, str(e)
-
-def actualizar_saldo_empresa(empresa_id, nuevo_saldo):
-    conn = sqlite3.connect('crm_telotengo.db')
-    cursor = conn.cursor()
-    cursor.execute("UPDATE empresas_saas SET saldo_creditos = ? WHERE id = ?", (int(nuevo_saldo), empresa_id))
-    conn.commit()
-    conn.close()
-
-def actualizar_prompt_empresa(empresa_id, nuevo_prompt):
-    conn = sqlite3.connect('crm_telotengo.db')
-    cursor = conn.cursor()
-    cursor.execute("UPDATE empresas_saas SET prompt_maestro = ? WHERE id = ?", (nuevo_prompt.strip(), empresa_id))
-    conn.commit()
-    conn.close()
-
-def eliminar_empresa_saas(empresa_id):
-    conn = sqlite3.connect('crm_telotengo.db')
-    cursor = conn.cursor()
-    cursor.execute("DELETE FROM empresas_saas WHERE id = ?", (empresa_id,))
-    conn.commit()
-    conn.close()
-
-# --- FUNCIÓN DE ENVÍO DIRECTO A WHATSAPP (API DE META) ---
+# --- FUNCIÓN DE ENVÍO DIRECTO A WHATSAPP (API DE META BLINDADA) ---
 def enviar_mensaje_whatsapp(telefono, mensaje):
-    meta_cfg = config.get("meta", {})
-    token = meta_cfg.get("token", "")
-    phone_number_id = meta_cfg.get("phone_number_id", "")
+    """Envía mensajes manuales desde el CRM usando las credenciales seguras de memoria."""
+    token = os.getenv("META_ACCESS_TOKEN", "")
+    phone_number_id = os.getenv("META_PHONE_ID", "")
     
     if not token or not phone_number_id:
-        return False, "Faltan las credenciales de Meta en el archivo config.json."
+        return False, "Faltan las credenciales META_ACCESS_TOKEN o META_PHONE_ID en seguridad.env."
     
     url = f"https://graph.facebook.com/v17.0/{phone_number_id}/messages"
     headers = {
@@ -255,7 +85,7 @@ def enviar_mensaje_whatsapp(telefono, mensaje):
     }
     
     try:
-        response = requests.post(url, headers=headers, json=payload)
+        response = requests.post(url, headers=headers, json=payload, timeout=10)
         if response.status_code == 200:
             return True, "Enviado con éxito"
         else:
@@ -275,7 +105,7 @@ with col_salir:
 
 st.markdown("---")
 
-# 4 Pestañas Principales
+# 4 Pestañas Principales de Gestión
 pestana_chat, pestana_saas, pestana_config, pestana_seguimiento = st.tabs([
     "📊 Auditoría, Leads y Chat en Vivo", 
     "🏢 Gestión de Clientes (SaaS & Tokens)",
@@ -294,12 +124,12 @@ with pestana_chat:
         with col_op1:
             st.subheader("Registro Individual")
             with st.form("form_nuevo_lead"):
-                nombre_nuevo = st.text_input("Nombre del Prospecto (ej: Raphie / Carlos Pérez)")
+                nombre_nuevo = st.text_input("Nombre del Prospecto (ej: Carlos Pérez)")
                 tel_nuevo = st.text_input("Teléfono con código de país (ej: +15551234567)")
                 estado_inicial_lead = st.selectbox("Clasificación Inicial", ["Nuevo Prospecto", "Frío", "Interesado", "Caliente"])
                 btn_guardar_lead = st.form_submit_button("💾 Guardar Lead")
                 if btn_guardar_lead:
-                    exito_reg, mensaje_reg = registrar_lead_manual(tel_nuevo, nombre_nuevo, estado_inicial_lead)
+                    exito_reg, mensaje_reg = db.registrar_lead_manual(tel_nuevo, nombre_nuevo, estado_inicial_lead)
                     if exito_reg:
                         st.success(mensaje_reg)
                         st.rerun()
@@ -322,7 +152,7 @@ with pestana_chat:
                             tel = row.get("telefono") or row.get("Teléfono") or row.get("PHONE")
                             est = row.get("estado") or row.get("Estado") or "Nuevo Prospecto"
                             if tel:
-                                exito, _ = registrar_lead_manual(tel.strip(), nom.strip(), est.strip())
+                                exito, _ = db.registrar_lead_manual(tel.strip(), nom.strip(), est.strip())
                                 if exito:
                                     importados += 1
                         st.success(f"¡Importación masiva completada! Se agregaron/actualizaron {importados} leads.")
@@ -331,7 +161,9 @@ with pestana_chat:
                         st.error(f"Error procesando el archivo CSV: {e}")
                     
     st.markdown("---")
-    leads = obtener_leads()
+    
+    # Obtenemos los leads directamente desde el gestor centralizado
+    leads = db.obtener_leads()
     
     if not leads:
         st.info("💡 Todavía no hay prospectos registrados. Utiliza el panel superior para agregar leads de forma manual o subiendo tu CSV.")
@@ -341,9 +173,9 @@ with pestana_chat:
         lead_seleccionado = lead_dict[seleccion_formato]
         
         if lead_seleccionado:
-            datos_lead = obtener_historial_lead(lead_seleccionado)
+            datos_lead = db.obtener_historial_completo_lead(lead_seleccionado)
             if datos_lead:
-                historial_chat = json.loads(datos_lead[0])
+                historial_chat = json.loads(datos_lead[0]) if datos_lead[0] else []
                 estado = datos_lead[1]
                 fecha = datos_lead[2]
                 nombre_lead = datos_lead[3] if len(datos_lead) > 3 and datos_lead[3] else "Sin Nombre"
@@ -367,7 +199,7 @@ with pestana_chat:
                         edit_estado = st.selectbox("Estado de Calificación", estados_posibles, index=current_idx)
                         btn_actualizar_lead = st.form_submit_button("💾 Guardar Cambios del Contacto")
                         if btn_actualizar_lead:
-                            exito_edit, msg_edit = editar_lead_en_db(lead_seleccionado, edit_telefono, edit_nombre, edit_estado)
+                            exito_edit, msg_edit = db.editar_lead_en_db(lead_seleccionado, edit_telefono, edit_nombre, edit_estado)
                             if exito_edit:
                                 st.success(msg_edit)
                                 st.rerun()
@@ -399,7 +231,7 @@ with pestana_chat:
                     mensaje_formateado = f"Agente: {texto_manual}"
                     exito, detalle = enviar_mensaje_whatsapp(lead_seleccionado, texto_manual)
                     if exito:
-                        agregar_mensaje_a_db(lead_seleccionado, mensaje_formateado)
+                        db.agregar_mensaje_manual_a_db(lead_seleccionado, mensaje_formateado)
                         st.success("¡Mensaje enviado a WhatsApp correctamente! ✅")
                         st.rerun()
                     else:
@@ -440,7 +272,7 @@ with pestana_saas:
             
             btn_crear_empresa = st.form_submit_button("🚀 Registrar Empresa en la Plataforma")
             if btn_crear_empresa:
-                exito_saas, msg_saas = registrar_empresa_saas(nom_empresa, tel_bot_empresa, saldo_inicial, prompt_empresa)
+                exito_saas, msg_saas = db.registrar_empresa_saas(nom_empresa, tel_bot_empresa, saldo_inicial, prompt_empresa)
                 if exito_saas:
                     st.success(msg_saas)
                     st.rerun()
@@ -450,7 +282,7 @@ with pestana_saas:
     st.markdown("---")
     st.subheader("📋 Empresas Activas en tu Plataforma SaaS")
     
-    empresas = obtener_empresas_saas()
+    empresas = db.obtener_empresas_saas()
     
     if not empresas:
         st.info("💡 Aún no tienes empresas clientes registradas. ¡Agrega la primera en el panel superior!")
@@ -472,12 +304,12 @@ with pestana_saas:
                         st.success(f"🟢 **Activo:** {emp_saldo} créditos")
                 with col_c3:
                     if st.button(f"➕ Recargar 1,000 Créditos ($100)", key=f"rec_{emp_id}"):
-                        actualizar_saldo_empresa(emp_id, emp_saldo + 1000)
+                        db.actualizar_saldo_empresa(emp_id, emp_saldo + 1000)
                         st.success("¡Recarga aplicada!")
                         st.rerun()
                 with col_c4:
                     if st.button("🗑️ Eliminar Cliente", key=f"del_{emp_id}"):
-                        eliminar_empresa_saas(emp_id)
+                        db.eliminar_empresa_saas(emp_id)
                         st.warning("Cliente eliminado.")
                         st.rerun()
                 
@@ -486,65 +318,59 @@ with pestana_saas:
                     with col_adj1:
                         nuevo_saldo_manual = st.number_input("Ajustar Saldo Exacto", value=emp_saldo, key=f"num_{emp_id}")
                         if st.button("💾 Guardar Saldo", key=f"save_saldo_{emp_id}"):
-                            actualizar_saldo_empresa(emp_id, nuevo_saldo_manual)
+                            db.actualizar_saldo_empresa(emp_id, nuevo_saldo_manual)
                             st.success("Saldo actualizado.")
                             st.rerun()
                     with col_adj2:
                         prompt_editado = st.text_area("Prompt Maestro Inteligente (Modificable en vivo):", value=emp_prompt, height=120, key=f"prompt_{emp_id}")
                         if st.button("📝 Actualizar Personalidad del Bot", key=f"save_prompt_{emp_id}"):
-                            actualizar_prompt_empresa(emp_id, prompt_editado)
-                            st.success("¡Personalidad del bot actualizada sin reiniciar código!")
+                            db.actualizar_prompt_empresa(emp_id, prompt_editado)
+                            st.success("¡Personalidad del bot actualizada sin tocar código!")
                             st.rerun()
                 st.markdown("---")
 
 # ==========================================
-# PESTAÑA 3: CONFIGURACIÓN Y PERSONALIDAD DEL BOT PRINCIPAL (¡LO QUE ESTABAS BUSCANDO!)
+# PESTAÑA 3: CONFIGURACIÓN Y PERSONALIDAD DEL BOT PRINCIPAL
 # ==========================================
 with pestana_config:
     st.header("⚙️ Configuración y Personalidad de la Agencia")
-    if config:
-        with st.form("form_config"):
-            st.subheader("🧠 Prompt Maestro del Asistente Principal (Telotengo Solutions)")
-            st.markdown("Este cuadro controla la personalidad, tono y servicios que ofrece tu bot en WhatsApp. Edítalo y se aplicará al instante sin tocar código:")
-            
-            prompt_defecto = (
-                "Eres el Consultor e Ingeniero IA de Telotengo Solutions. Tu objetivo es asesorar a dueños de negocios "
-                "y ofrecerles nuestro ecosistema de soluciones tecnológicas 360° para escalar sus ventas:\n"
-                "1) Asistentes e Agentes de IA 24/7 para WhatsApp (como tú).\n"
-                "2) CRMs personalizados y automatizados para control total de prospectos.\n"
-                "3) Diseño y Desarrollo Web de alta conversión enfocados en ventas.\n"
-                "4) Automatización y gestión de Redes Sociales.\n"
-                "5) Avatares personalizados creados con Inteligencia Artificial para marketing y video.\n\n"
-                "Sé profesional, innovador, persuasivo y busca siempre agendar una llamada de consultoría gratuita con el ingeniero Luis Castillo."
-            )
-            
-            prompt_maestro_global = st.text_area(
-                "📝 Instrucciones y Personalidad del Bot:", 
-                value=config['negocio'].get('prompt_maestro', prompt_defecto),
-                height=220
-            )
-            
-            st.markdown("---")
-            st.subheader("🏢 Datos Generales de tu Negocio")
-            nombre_negocio = st.text_input("Nombre de la Agencia", value=config['negocio'].get('nombre', 'Telotengo Solutions'))
-            promesa_negocio = st.text_area("Promesa Principal", value=config['negocio'].get('promesa_principal', 'Soluciones Tecnológicas 360° para Escalar Negocios'))
-            tono_voz = st.text_input("Tono de Voz", value=config['negocio'].get('tono_voz', 'Profesional, Tecnológico y Persuasivo'))
-            enlace_citas = st.text_input("Enlace de Agendamiento", value=config['negocio'].get('enlace_citas', ''))
-            
-            st.markdown("---")
-            st.subheader("🔒 Seguridad de la Plataforma SaaS")
-            nueva_pwd = st.text_input("Cambiar Contraseña del CRM", type="password", value=config.get('crm_password', 'telotengo2026'))
-            
-            btn_guardar = st.form_submit_button("💾 Guardar Personalidad y Configuración")
-            if btn_guardar:
-                config['negocio']['prompt_maestro'] = prompt_maestro_global
-                config['negocio']['nombre'] = nombre_negocio
-                config['negocio']['promesa_principal'] = promesa_negocio
-                config['negocio']['tono_voz'] = tono_voz
-                config['negocio']['enlace_citas'] = enlace_citas
-                config['crm_password'] = nueva_pwd
-                guardar_config(config)
-                st.success("¡Prompt Maestro y personalidad actualizados con éxito! Tu bot ya piensa como un consultor 360°. 🚀")
+    with st.form("form_config"):
+        st.subheader("🧠 Prompt Maestro del Asistente Principal (Telotengo Solutions)")
+        st.markdown("Este cuadro controla la personalidad, tono y servicios que ofrece tu bot en WhatsApp. Edítalo y se aplicará al instante:")
+        
+        prompt_defecto = (
+            "Eres el Consultor e Ingeniero IA de Telotengo Solutions. Tu objetivo es asesorar a dueños de negocios "
+            "y ofrecerles nuestro ecosistema de soluciones tecnológicas 360° para escalar sus ventas:\n"
+            "1) Asistentes e Agentes de IA 24/7 para WhatsApp (como tú).\n"
+            "2) CRMs personalizados y automatizados para control total de prospectos.\n"
+            "3) Diseño y Desarrollo Web de alta conversión enfocados en ventas.\n"
+            "4) Automatización y gestión de Redes Sociales.\n"
+            "5) Avatares personalizados creados con Inteligencia Artificial para marketing y video.\n\n"
+            "Sé profesional, innovador, persuasivo y busca siempre agendar una llamada de consultoría gratuita con el ingeniero Luis Castillo."
+        )
+        
+        prompt_maestro_global = st.text_area(
+            "📝 Instrucciones y Personalidad del Bot:", 
+            value=config['negocio'].get('prompt_maestro', prompt_defecto),
+            height=220
+        )
+        
+        st.markdown("---")
+        st.subheader("🏢 Datos Generales de tu Negocio")
+        nombre_negocio = st.text_input("Nombre de la Agencia", value=config['negocio'].get('nombre', 'Telotengo Solutions'))
+        promesa_negocio = st.text_area("Promesa Principal", value=config['negocio'].get('promesa_principal', 'Soluciones Tecnológicas 360° para Escalar Negocios'))
+        tono_voz = st.text_input("Tono de Voz", value=config['negocio'].get('tono_voz', 'Profesional, Tecnológico y Persuasivo'))
+        enlace_citas = st.text_input("Enlace de Agendamiento", value=config['negocio'].get('enlace_citas', ''))
+        
+        btn_guardar = st.form_submit_button("💾 Guardar Personalidad y Configuración")
+        if btn_guardar:
+            config['negocio']['prompt_maestro'] = prompt_maestro_global
+            config['negocio']['nombre'] = nombre_negocio
+            config['negocio']['promesa_principal'] = promesa_negocio
+            config['negocio']['tono_voz'] = tono_voz
+            config['negocio']['enlace_citas'] = enlace_citas
+            guardar_config(config)
+            st.success("¡Prompt Maestro y configuración actualizados con éxito! 🚀")
 
 # ==========================================
 # PESTAÑA 4: AUTOMATIZACIÓN Y SEGUIMIENTO 24H
@@ -554,7 +380,7 @@ with pestana_seguimiento:
     st.markdown("""
     Aquí puedes definir las reglas para reactivar prospectos fríos o que dejaron la conversación en visto.
     """)
-    st.info("💡 **Regla de las 24 horas:** El sistema analiza la última interacción del lead. Si han pasado más de 24 horas y no ha completado el agendamiento, el sistema puede disparar automáticamente un mensaje de reactivación.")
+    st.info("💡 **El servidor en segundo plano evalúa esto automáticamente:** Si un prospecto lleva 24 horas sin hablar, se dispara el seguimiento sin que tú hagas nada.")
     
     mensaje_seguimiento = st.text_area(
         "Plantilla de Mensaje de Seguimiento automático:", 
@@ -562,7 +388,7 @@ with pestana_seguimiento:
     )
     
     if st.button("🚀 Ejecutar barrido de seguimiento manual ahora"):
-        leads_todos = obtener_leads()
+        leads_todos = db.obtener_leads()
         contador_enviados = 0
         ahora = datetime.now()
         for lead in leads_todos:
@@ -573,7 +399,7 @@ with pestana_seguimiento:
                 if ahora - ult_fecha > timedelta(hours=24):
                     exito, _ = enviar_mensaje_whatsapp(tel, mensaje_seguimiento)
                     if exito:
-                        agregar_mensaje_a_db(tel, f"Bot (Seguimiento 24h): {mensaje_seguimiento}")
+                        db.agregar_mensaje_manual_a_db(tel, f"Bot (Seguimiento 24h): {mensaje_seguimiento}")
                         contador_enviados += 1
             except Exception:
                 pass

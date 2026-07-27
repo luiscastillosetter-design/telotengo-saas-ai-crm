@@ -1,8 +1,37 @@
-config.json
-crm_telotengo.db
-__pycache__/
+# ==========================================
+# ARCHIVOS DE SEGURIDAD Y ENTORNO (NUNCA SUBIR)
+# ==========================================
+seguridad.env
 *.env
+config.json
+
+# ==========================================
+# BASES DE DATOS Y LOGS DEL CRM
+# ==========================================
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# ==========================================
+# ARCHIVOS TEMPORALES DE VOZ Y PYTHON
+# ==========================================
+__pycache__/
+*.pyc
+*.wav
+*.ogg
+*.mp3
+temp_audio_*
+
+# ==========================================
+# DEPENDENCIAS Y CACHÉ DE NODE.JS / WHATSAPP
+# ==========================================
 node_modules/
 .wwebjs_auth/
 .wwebjs_cache/
-*.html
+
+# ==========================================
+# ARCHIVOS TEMPORALES DE DIAGNÓSTICO
+# ==========================================
+test_conexion.py
+test_env.py

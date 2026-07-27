@@ -1,80 +1,155 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
-const Anthropic = require('@anthropic-ai/sdk');
 const qrcode = require('qrcode-terminal');
+const sqlite3 = require('sqlite3').verbose();
+const fs = require('fs');
 
-// 1. CONEXIÓN AL CEREBRO DE CLAUDE (Protegido para GitHub)
-const anthropic = new Anthropic({
-    apiKey: 'TU_API_KEY_AQUI', // <-- Reemplaza con tu llave real en tu entorno local (nunca la subas a GitHub)
-});
+// =====================================================================
+// DATOS GENERALES DEL NEGOCIO (IMPULSO A LA COMPRA)
+// =====================================================================
+const DATOS_NEGOCIO = {
+    nombre: "Telotengo Solutions",
+    promesa: "Automatización con IA 24/7 para WhatsApp que atiende, califica y remata ventas por ti, más desarrollo de cualquier ecosistema o proyecto digital a medida. ¡Una inversión que se paga sola desde el primer mes! 🚀",
+    agendamentoWhatsapp: "https://wa.me/584245885477",
+    calendarioReuniones: "https://api.leadconnectorhq.com/widget/booking/cHgLoMCk71bch2PmxVee"
+};
 
-// 2. CONFIGURACIÓN DEL MOTOR WHATSAPP
+// =====================================================================
+// INICIALIZACIÓN DEL CLIENTE DE WHATSAPP (SOFÍA)
+// =====================================================================
 const client = new Client({
-    authStrategy: new LocalAuth()
+    authStrategy: new LocalAuth({ clientId: "telotengo-bot" })
 });
 
 client.on('qr', (qr) => {
-    console.log('📱 Escanea el QR para reconectar el motor:');
+    console.log('Escanea el código QR para iniciar sesión en WhatsApp:');
     qrcode.generate(qr, { small: true });
 });
 
 client.on('ready', () => {
-    console.log('✅ ¡Motor conectado!');
-    console.log('🧠 Cerebro Gema en línea, escuchando y lista para cerrar ventas...');
-    console.log('---------------------------------------------------------');
+    console.log('✅ Sofía (Asistente Ejecutiva) está lista, conectada y operando sin errores.');
 });
 
-// 3. MÓDULO DE ESCUCHA ACTIVA Y CIERRE DE VENTAS (MODO SEGURO)
-client.on('message', async message => {
-    // 1. Filtro base: Evitamos grupos y estados
-    if (message.from === 'status@broadcast' || message.from.includes('-') || message.isStatus) return;
+// =====================================================================
+// MÓDULO DE COMANDOS GERENCIALES Y RECONOCIMIENTO ("EL JEFE")
+// =====================================================================
+const NUMERO_JEFE = '584245885477@c.us';
 
-    // 2. Filtro: Ignorar los mensajes de tu apertura manual
-    if (message.fromMe) return;
-
-    // 3. Filtro: Ignorar mensajes vacíos
-    if (!message.body || message.body.trim() === '') return;
-
-    console.log(`👤 Prospecto [${message.from.split('@')[0]}] dice: ${message.body}`);
-
-    try {
-        console.log('⏳ Gema está pensando la respuesta...');
-
-        const response = await anthropic.messages.create({
-            model: "claude-haiku-4-5-20251001", 
-            max_tokens: 250,
-            system: `Eres Gema, la SDR y cerradora de ventas de Telotengo Solutions.
-            Un prospecto acaba de responder a nuestra campaña de prospección.
-            
-            Reglas estrictas:
-            1. Sé persuasiva, natural y concisa (máximo 3 oraciones).
-            2. Si el prospecto tiene una objeción, rebátela educadamente enfocándote en que nuestro sistema es 'Done-for-you'.
-            3. Si el prospecto dice 'sí' o muestra interés, entrégale este enlace para agendar una auditoría gratis: https://api.leadconnectorhq.com/widget/booking/cHgLoMCK71bch2PmxVee
-            4. Si el prospecto pide más información, ofrécele OBLIGATORIAMENTE los regalos VIP por contratar (Web de $1,500 y 3 meses de redes por $2,400 gratis).
-            5. Nunca envíes código ni formato markdown. Solo texto limpio.`,
-            messages: [
-                { role: "user", content: message.body }
-            ]
-        });
-
-        const respuestaGema = response.content[0].text;
-
-        // Pausa aleatoria anti-bloqueo (entre 8 y 14 segundos)
-        const tiempoPausa = Math.floor(Math.random() * (14000 - 8000 + 1) + 8000);
-        console.log(`⏳ Esperando ${tiempoPausa/1000} segundos antes de enviar (Modo Seguro)...`);
-        await new Promise(resolve => setTimeout(resolve, tiempoPausa));
-
-        // Enviar respuesta DIRECTA (Evitamos usar message.getChat() para que no colapse)
-        await message.reply(respuestaGema);
-
-        console.log(`✅ Gema respondió: ${respuestaGema}`);
-        console.log('---------------------------------------------------------');
-
-    } catch (error) {
-        console.error('❌ Error DETALLADO en el cerebro de Gema:');
-        console.error(error); 
-        console.log('---------------------------------------------------------');
+/**
+ * Intercepta y procesa cualquier mensaje proveniente del Administrador.
+ * Retorna true si el mensaje es del Jefe para detener el flujo de ventas.
+ */
+async function procesarComandosJefe(msg) {
+    if (msg.from !== NUMERO_JEFE) {
+        return false; // No es el jefe, permite que continúe el flujo para clientes
     }
+
+    const textoMensaje = msg.body.trim();
+
+    // 1. Comando gerencial: REPORTE
+    if (textoMensaje === 'REPORTE') {
+        const db = new sqlite3.Database('crm_telotengo.db');
+        
+        db.all("SELECT * FROM leads", [], async (err, rows) => {
+            db.close();
+            if (err) {
+                await msg.reply('❌ Error al consultar la base de datos para generar el reporte gerencial.');
+                return;
+            }
+
+            let reporte = `📊 *REPORTE EJECUTIVO DEL DÍA (SOFÍA)*\n\n`;
+            reporte += `👥 Total de registros en base de datos: ${rows.length}\n\n`;
+            
+            rows.slice(-5).forEach((lead, index) => {
+                reporte += `${index + 1}. *${lead.nombre || 'Sin nombre'} ${lead.apellido || ''}*\n   Origen: ${lead.tipo_contacto || 'Directo'}\n   Etapa: ${lead.etapa || 'Nuevo'}\n`;
+            });
+
+            await msg.reply(reporte);
+        });
+        return true;
+    }
+
+    // 2. Consulta interactiva de leads (Sintaxis: lead: Nombre)
+    if (textoMensaje.toLowerCase().startsWith('lead:')) {
+        const nombreBusqueda = textoMensaje.replace('lead:', '').trim();
+        const db = new sqlite3.Database('crm_telotengo.db');
+
+        db.get("SELECT * FROM leads WHERE nombre LIKE ?", [`%${nombreBusqueda}%`], async (err, row) => {
+            db.close();
+            if (err || !row) {
+                await msg.reply(`❌ No se encontró ningún lead que coincida con: "${nombreBusqueda}"`);
+                return;
+            }
+
+            let infoLead = `👤 *INFORMACIÓN DETALLADA DEL LEAD*\n\n`;
+            infoLead += `• *Nombre:* ${row.nombre} ${row.apellido || ''}\n`;
+            infoLead += `• *Teléfono:* ${row.telefono || 'No registrado'}\n`;
+            infoLead += `• *Tipo:* ${row.tipo_contacto || 'Prospecto'}\n`;
+            infoLead += `• *Referido por:* ${row.referido_por || 'N/A'}\n`;
+            infoLead += `• *Etapa:* ${row.etapa || 'Seguimiento'}\n`;
+
+            await msg.reply(infoLead);
+        });
+        return true;
+    }
+
+    // 3. RECONOCIMIENTO GENERAL: Si el Jefe escribe saludos o cualquier otra cosa
+    let respuestaJefe = `¡Hola, Jefe! 🫡 Le reconozco perfectamente. Sofía a sus órdenes.\n\n`;
+    respuestaJefe += `📌 *SUS COMANDOS EJECUTIVOS DISPONIBLES:*\n`;
+    respuestaJefe += `• Escriba *REPORTE* (en mayúsculas) para ver el resumen general de leads.\n`;
+    respuestaJefe += `• Escriba *lead: Nombre* para buscar datos de un cliente (ej: lead: Juan).\n\n`;
+    respuestaJefe += `*(He bloqueado la respuesta de la IA de ventas para este mensaje para no generar registros innecesarios en su CRM)*. ¡Quedo atenta a sus instrucciones! 🚀`;
+
+    await msg.reply(respuestaJefe);
+    return true; // Retornamos true para detener el flujo aquí y no enviarlo a Groq Cloud
+}
+
+// =====================================================================
+// MÓDULO DE GESTIÓN DE NOTAS DE VOZ (RESPUESTA AMABLE)
+// =====================================================================
+async function procesarNotasDeVoz(msg) {
+    if (msg.hasMedia && (msg.type === 'ptt' || msg.type === 'audio')) {
+        await msg.reply("¡Hola! He recibido tu nota de voz 🎙️. Para brindarte la mejor atención de forma inmediata y precisa, ¿podrías escribirme tu consulta brevemente por aquí por favor? Así podré ayudarte mucho más rápido.");
+        return true;
+    }
+    return false;
+}
+
+// =====================================================================
+// MÓDULO DE IMPULSO A LA COMPRA Y AGENDAMIENTO AUTOMÁTICO
+// =====================================================================
+async function procesarIntencionCompra(msg) {
+    const texto = msg.body.toLowerCase();
+    const palabrasClave = ['agendar', 'reunión', 'precio', 'comprar', 'información', 'contacto', 'cita'];
+    const contieneIntencion = palabrasClave.some(palabra => texto.includes(palabra));
+
+    if (contieneIntencion) {
+        let respuestaComercial = `¡Excelente decisión! ${DATOS_NEGOCIO.promesa}\n\n`;
+        respuestaComercial += `Puedes agendar tu reunión directamente aquí:\n📅 ${DATOS_NEGOCIO.calendarioReuniones}\n\n`;
+        respuestaComercial += `O escribirnos por WhatsApp directo:\n💬 ${DATOS_NEGOCIO.agendamentoWhatsapp}`;
+
+        await msg.reply(respuestaComercial);
+        return true;
+    }
+    return false;
+}
+
+// =====================================================================
+// ESCUCHADOR DE MENSAJES ENTRANTES (ENRUTADOR PRINCIPAL)
+// =====================================================================
+client.on('message', async msg => {
+    // 1. Verificamos si es El Jefe. Si es el Jefe, Sofía le responde y DETIENE el flujo aquí.
+    const esJefe = await procesarComandosJefe(msg);
+    if (esJefe) return;
+
+    // 2. Verificamos si es una nota de voz de un cliente normal
+    const esAudio = await procesarNotasDeVoz(msg);
+    if (esAudio) return;
+
+    // 3. Verificamos si tiene intención de compra
+    await procesarIntencionCompra(msg);
+    
+    // Aquí el mensaje continúa su camino normal hacia tu servidor Flask / Groq Cloud si es un cliente regular
 });
 
-// 4. ENCENDIDO DEL MOTOR 
+// Inicializar el cliente
 client.initialize();
