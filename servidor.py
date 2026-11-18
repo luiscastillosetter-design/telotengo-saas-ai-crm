@@ -43,7 +43,13 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # Anthropic (conexión directa, único proveedor de IA)
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-haiku-5-5")
+MODELO_HAIKU_VERIFICADO = "claude-haiku-5-5"  # ID oficial verificado vía GET /v1/models
+_modelo_env = (os.getenv("ANTHROPIC_MODEL", "") or "").strip()
+# Si ANTHROPIC_MODEL no es un Haiku 4.5+ válido, se usa automáticamente el ID verificado
+_MODELOS_HAIKU_VALIDOS = {MODELO_HAIKU_VERIFICADO, "claude-haiku-4-5-20251001", "claude-haiku-4-5"}
+ANTHROPIC_MODEL = _modelo_env if _modelo_env in _MODELOS_HAIKU_VALIDOS else MODELO_HAIKU_VERIFICADO
+if _modelo_env and _modelo_env != ANTHROPIC_MODEL:
+    print(f"⚠️ ANTHROPIC_MODEL='{_modelo_env}' no es válido; se usa '{ANTHROPIC_MODEL}'")
 
 # =====================================================================
 # 3.1 RESOLUCIÓN DINÁMICA DE META TOKENS (NUEVO MOTOR SAAS)
@@ -130,7 +136,9 @@ SYSTEM_PROMPT_SOFIA = """ROL E IDENTIDAD
 Eres Sofía, asesora de ventas de Importadora TodoMax (https://www.importadoratodomax.com), tienda en línea de Venezuela. Conoces ÚNICA Y EXCLUSIVAMENTE el entorno de importadoratodomax.com: su catálogo en vivo, métodos de pago, ofertas, carrito, pasos de compra y uso de la página. Español cálido, directo y breve (máximo 5-6 líneas, UNA pregunta por mensaje, pocos emojis).
 
 REGLAS OBLIGATORIAS (CERO ALUCINACIONES)
-- Nunca inventes productos, precios, descuentos, stock ni respuestas fuera de importadoratodomax.com. Usa SOLO el CATÁLOGO EN VIVO que aparece al final de este mensaje. Si algo no está ahí, dilo con honestidad y sugiere lo más parecido del catálogo o la web.
+- Usa ÚNICAMENTE los productos, precios y enlaces del CATÁLOGO EN VIVO (JSON real de https://www.importadoratodomax.com/api/products) que aparece al final de este mensaje. Nunca inventes productos, modelos, precios, descuentos, stock, enlaces ni respuestas fuera de importadoratodomax.com.
+- Si el cliente pide algo que NO existe en el catálogo, dilo con claridad ("no lo tenemos disponible ahora"), sugiere lo más parecido que SÍ esté en el catálogo y envía a https://www.importadoratodomax.com. Si el catálogo no está disponible, no menciones productos ni precios y envía a la web.
+- Todo enlace de producto debe ser exactamente el "Enlace" del catálogo (https://www.importadoratodomax.com/product/{id}); jamás construyas ni modifiques un id.
 - Si el tema no es de importadoratodomax.com, di amablemente que solo puedes ayudar con la tienda.
 - Si preguntan por un producto: da la info breve (nombre, precio en USD, oferta si aplica, disponibilidad) y envía SIEMPRE el enlace directo exacto "Enlace" del catálogo (formato https://www.importadoratodomax.com/product/{id}). Máximo 3 productos por respuesta.
 - Precios en USD; si preguntan por bolívares usa la TASA BCV indicada abajo (precio USD x tasa). Si no hay tasa, dilo y di que la ven en la barra superior de la web.
@@ -312,13 +320,18 @@ def _llamar_anthropic(system_prompt, mensajes_chat):
     }
     payload = {
         "model": ANTHROPIC_MODEL,
-        "max_tokens": 400,
-        "temperature": 0.5,
+        "max_tokens": 500,
+        "temperature": 0.1,
         "system": system_prompt,
         "messages": mensajes_chat,
     }
     try:
-        res = requests.post(ANTHROPIC_URL, headers=headers, json=payload, timeout=60)
+        res = requests.post(ANTHROPIC_URL, headers=headers, json=payload, timeout=25)
+        # Los modelos Haiku 5.x rechazan 'temperature' (HTTP 400 "deprecated"): reintento sin ese parámetro
+        if res.status_code == 400 and "temperature" in res.text.lower():
+            registrar_log_sistema("WARNING", "Anthropic rechazó 'temperature' para este modelo; reintentando sin ese parámetro")
+            payload.pop("temperature", None)
+            res = requests.post(ANTHROPIC_URL, headers=headers, json=payload, timeout=25)
         if res.status_code == 200:
             data = res.json()
             texto = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text").strip()

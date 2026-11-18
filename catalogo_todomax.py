@@ -35,8 +35,17 @@ def obtener_productos():
             if isinstance(datos, list):
                 _cache["productos"] = [p for p in datos if isinstance(p, dict) and p.get("id") and (p.get("stock") or 0) > 0]
                 _cache["ts"] = time.time()
+                print(f"✅ Catálogo en vivo: {len(_cache['productos'])} productos con stock ({len(datos)} totales)")
+            else:
+                print(f"⚠️ Catálogo: la API devolvió {type(datos).__name__} en vez de lista: {str(datos)[:150]}")
+        except requests.exceptions.Timeout:
+            print(f"⚠️ Catálogo: timeout (8s) consultando {URL_API_PRODUCTOS}")
+        except requests.exceptions.HTTPError as e:
+            print(f"⚠️ Catálogo: HTTP {e.response.status_code} desde {URL_API_PRODUCTOS}")
+        except ValueError as e:
+            print(f"⚠️ Catálogo: JSON inválido desde {URL_API_PRODUCTOS}: {e}")
         except Exception as e:
-            print(f"⚠️ No se pudo consultar el catálogo en vivo: {e}")
+            print(f"⚠️ No se pudo consultar el catálogo en vivo ({type(e).__name__}): {e}")
         return _cache["productos"]
 
 
