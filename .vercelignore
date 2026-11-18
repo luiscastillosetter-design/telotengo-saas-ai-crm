@@ -1,0 +1,9 @@
+node_modules
+.wwebjs_auth
+.wwebjs_cache
+*.db
+*.log
+*.wav
+*.ogg
+seguridad.env
+config.json

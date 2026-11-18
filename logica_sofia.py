@@ -4,8 +4,8 @@
 # =====================================================================
 import sqlite3
 import os
-import speech_recognition as sr
-from pydub import AudioSegment
+import gestor_basedatos as db
+from rutas import ruta_escribible
 
 # =====================================================================
 # CONFIGURACIÓN DE CONSTANTES DEL SISTEMA
@@ -13,10 +13,10 @@ from pydub import AudioSegment
 NUMERO_JEFE = os.getenv("NUMERO_JEFE", "584245885477")
 
 DATOS_NEGOCIO = {
-    "nombre": "Telotengo Solutions",
+    "nombre": "Todomax",
     "promesa": "Automatización con IA 24/7 para WhatsApp que atiende, califica y remata ventas por ti, más desarrollo de cualquier ecosistema o proyecto digital a medida. ¡Una inversión que se paga sola desde el primer mes! 🚀",
     "agendamento_whatsapp": "https://wa.me/584245885477",
-    "calendario_reuniones": "https://api.leadconnectorhq.com/widget/booking/cHgLoMCk71bch2PmxVee"
+    "calendario_reuniones": "https://cal.com/telotengosolutions/30min"
 }
 
 # =====================================================================
@@ -29,9 +29,11 @@ def transcribir_audio_local_gratis(ruta_archivo_audio):
         return ""
 
     try:
+        import speech_recognition as sr  # import perezoso: no existe en Vercel
+        from pydub import AudioSegment
         print(f"🎙️ [Sofía Escuchando] Procesando audio local gratuito: {ruta_archivo_audio}...")
         
-        archivo_wav = f"{ruta_archivo_audio}_temp.wav"
+        archivo_wav = ruta_escribible(os.path.basename(ruta_archivo_audio) + "_temp.wav")
         audio = AudioSegment.from_file(ruta_archivo_audio)
         audio.export(archivo_wav, format="wav")
 
@@ -41,14 +43,19 @@ def transcribir_audio_local_gratis(ruta_archivo_audio):
             texto_transcrito = reconocedor.recognize_google(datos_audio, language="es-ES")
             print(f"✅ [Voz convertida a texto exitosamente]: '{texto_transcrito}'")
             
-            if os.path.exists(archivo_wav):
-                os.remove(archivo_wav)
+            # Intento de limpieza segura para evitar que el [WinError 32] corte la respuesta de la IA
+            try:
+                if os.path.exists(archivo_wav):
+                    os.remove(archivo_wav)
+            except (PermissionError, Exception) as e:
+                print(f"⚠️ Aviso: No se pudo borrar el .wav temporal: {e}")
+                
             return texto_transcrito
             
-    except sr.UnknownValueError:
-        print("⚠️ El motor gratuito no pudo entender las palabras en el audio (habla incomprensible).")
-        return ""
     except Exception as error:
+        if type(error).__name__ == "UnknownValueError":
+            print("⚠️ El motor gratuito no pudo entender las palabras en el audio (habla incomprensible).")
+            return ""
         print(f"❌ Error técnico en la transcripción local gratuita: {error}")
         return ""
 
@@ -56,7 +63,7 @@ def transcribir_audio_local_gratis(ruta_archivo_audio):
 # FUNCIÓN PRINCIPAL DE FILTRADO Y ENRUTAMIENTO LÓGICO
 # =====================================================================
 def evaluar_mensaje_sofia(remitente, texto_mensaje, es_audio, funcion_envio_meta, ruta_audio=None):
-    """Evaluador lógico que decide si Sofía responde o si pasa a Groq Cloud."""
+    """Evaluador lógico que decide si Sofía responde sola o si pasa a Anthropic Haiku."""
     texto_limpio = str(texto_mensaje).strip() if texto_mensaje else ""
 
     # 1. ESCUCHA ACTIVA DE NOTAS DE VOZ
@@ -77,7 +84,7 @@ def evaluar_mensaje_sofia(remitente, texto_mensaje, es_audio, funcion_envio_meta
         
         if texto_mayusc == "REPORTE":
             try:
-                conexion = sqlite3.connect("crm_telotengo.db")
+                conexion = sqlite3.connect(db.DB_PATH)
                 cursor = conexion.cursor()
                 cursor.execute("SELECT nombre, apellido, tipo_contacto, etapa FROM leads")
                 filas = cursor.fetchall()
@@ -104,7 +111,7 @@ def evaluar_mensaje_sofia(remitente, texto_mensaje, es_audio, funcion_envio_meta
         if texto_minusc.startswith("lead:"):
             nombre_busqueda = texto_limpio[5:].strip()
             try:
-                conexion = sqlite3.connect("crm_telotengo.db")
+                conexion = sqlite3.connect(db.DB_PATH)
                 cursor = conexion.cursor()
                 cursor.execute("SELECT nombre, apellido, telefono, tipo_contacto, referido_por, etapa FROM leads WHERE nombre LIKE ?", (f"%{nombre_busqueda}%",))
                 row = cursor.fetchone()
@@ -125,24 +132,56 @@ def evaluar_mensaje_sofia(remitente, texto_mensaje, es_audio, funcion_envio_meta
                 funcion_envio_meta(remitente, "❌ Error al buscar en la base de datos.")
             return {"atendido": True, "texto_limpio": texto_limpio}
 
-        respuesta_jefe = "¡Hola, Jefe! 🫡 Le reconozco perfectamente. Sofía a sus órdenes.\n\n"
-        respuesta_jefe += "📌 *SUS COMANDOS EJECUTIVOS DISPONIBLES (POR TEXTO O VOZ):*\n"
-        respuesta_jefe += "• Escriba o diga *REPORTE* para ver el resumen general de leads.\n"
-        respuesta_jefe += "• Escriba o diga *lead: Nombre* para buscar datos de un cliente (ej: lead: Juan).\n\n"
-        respuesta_jefe += "*(Flujo de IA de ventas pausado en este chat para proteger su CRM y saldo)*. ¡Quedo atenta a sus instrucciones! 🚀"
+        # CONSULTA INTELIGENTE POR LENGUAJE NATURAL (JEFE)
+        if texto_minusc.startswith("consulta:"):
+            try:
+                from datetime import datetime
+                conexion = sqlite3.connect(db.DB_PATH)
+                cursor = conexion.cursor()
+                
+                # Total de leads
+                cursor.execute("SELECT COUNT(*) FROM leads")
+                total_leads = cursor.fetchone()[0]
+                
+                # Leads agrupados por temperatura / estado de calificación
+                cursor.execute("SELECT estado_calificacion, COUNT(*) FROM leads GROUP BY estado_calificacion")
+                por_estado = cursor.fetchall()
+                
+                # Contactados hoy
+                hoy_str = datetime.now().strftime("%Y-%m-%d")
+                cursor.execute("SELECT COUNT(*) FROM leads WHERE ultima_interaccion LIKE ?", (f"{hoy_str}%",))
+                contactados_hoy = cursor.fetchone()[0]
+                
+                # Leads más recientes (activos o cercanos)
+                cursor.execute("SELECT nombre, telefono, estado_calificacion, ultima_interaccion FROM leads ORDER BY ultima_interaccion DESC LIMIT 4")
+                recientes = cursor.fetchall()
+                
+                conexion.close()
 
-        funcion_envio_meta(remitente, respuesta_jefe)
-        return {"atendido": True, "texto_limpio": texto_limpio}
+                informe_natural = f" Jefe, analizando la base de datos en tiempo real:\n\n"
+                informe_natural += f"• *Contactados hoy:* {contactados_hoy} prospectos.\n"
+                informe_natural += f"• *Total histórico:* {total_leads} leads registrados.\n\n"
+                
+                informe_natural += f"🌡️ *Distribución por Temperatura/Estado:*\n"
+                for est, cnt in por_estado:
+                    informe_natural += f"  - {est or 'Sin clasificar'}: {cnt}\n"
+                
+                informe_natural += f"\n🔥 *Prospectos con actividad más reciente (Cercanos a cierre):*\n"
+                for rec in recientes:
+                    nom = rec[0] or "Sin nombre"
+                    tel = rec[1]
+                    est = rec[2]
+                    fec = rec[3]
+                    informe_natural += f"  - {nom} ({tel}) | [{est}] - Ult. Interacción: {fec}\n"
+                
+                informe_natural += f"\n*(Comandos rápidos disponibles: REPORTE, lead: Nombre, consulta: Pregunta)*"
+                
+                funcion_envio_meta(remitente, informe_natural)
+            except Exception as error:
+                print(f"❌ Error procesando consulta natural del jefe: {error}")
+                funcion_envio_meta(remitente, " Jefe, ocurrió un error consultando los datos para tu reporte.")
+            
+            return {"atendido": True, "texto_limpio": texto_limpio}
 
-    # 3. MÓDULO COMERCIAL PARA CLIENTES NORMALES (IMPULSO A LA COMPRA)
-    palabras_clave_compra = ["agendar", "reunión", "reunion", "precio", "comprar", "información", "informacion", "contacto", "cita"]
-    if any(palabra in texto_minusc for palabra in palabras_clave_compra):
-        respuesta_comercial = f"¡Excelente decisión! {DATOS_NEGOCIO['promesa']}\n\n"
-        respuesta_comercial += f"Puedes agendar tu reunión directamente aquí:\n📅 {DATOS_NEGOCIO['calendario_reuniones']}\n\n"
-        respuesta_comercial += f"O escribirnos por WhatsApp directo:\n💬 {DATOS_NEGOCIO['agendamento_whatsapp']}"
-
-        funcion_envio_meta(remitente, respuesta_comercial)
-        return {"atendido": True, "texto_limpio": texto_limpio}
-
-    # 4. RETORNO PARA GROQ CLOUD
+    # 3. RETORNO PARA LA CASCADA DE IA (Sofía tomará el control total de la conversación)
     return {"atendido": False, "texto_limpio": texto_limpio}
