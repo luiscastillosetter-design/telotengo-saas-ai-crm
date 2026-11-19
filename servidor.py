@@ -17,7 +17,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 # =====================================================================
 load_dotenv("seguridad.env")
 from logica_sofia import evaluar_mensaje_sofia
-from anti_spam import respuesta_anti_spam, limite_ia_alcanzado, MENSAJE_LIMITE
+from anti_spam import respuesta_anti_spam, limite_ia_alcanzado, MENSAJE_LIMITE, respuesta_compra_checkout
 from catalogo_todomax import bloque_catalogo_vivo
 from rutas import EN_VERCEL, ruta_escribible
 
@@ -151,6 +151,9 @@ CÓMO COMPRAR (pasos)
 MÉTODOS DE PAGO (en el checkout)
 Pago Móvil, Transferencia, Zelle, Binance Pay y Efectivo. Cada producto indica en su ficha cuáles acepta. Los datos de la cuenta (banco, teléfono, correo, Pay ID) se muestran en el checkout al elegir el método: NO los inventes ni los des tú. Excepto Efectivo, todos requieren referencia y comprobante.
 Envío gratis en compras desde $50. Empresas de envío: MRW, Zoom, Tealca, Delivery Local y Retiro en Tienda.
+
+COMPRAS YA REALIZADAS (REGLA ESTRICTA)
+Si un cliente escribe por su cuenta diciendo que acaba de comprar o pagar, SOLO confirma que ya recibimos su compra y que en los próximos minutos alguien del personal administrativo se comunicará con él (para agendar la entrega si es retiro personal, o para indicarle cuándo sale el envío y su código/ruta si es envío). PROHIBIDO inventar fechas, guías, números de seguimiento o pasos adicionales.
 
 DERIVACIÓN A HUMANO (REGLA ESTRICTA)
 Si el cliente pide hablar con una persona, asesor, personal administrativo o soporte humano, entrega DE INMEDIATO el WhatsApp de la oficina/administración: +58 422-5160056, con su enlace directo https://wa.me/584225160056. NUNCA des el número +1 754-341-1559 (es el del bot) como contacto humano.
@@ -501,6 +504,16 @@ def procesar_mensaje_en_segundo_plane(telefono_cliente, texto_cliente, telefono_
             except Exception:
                 pass
             ruta_media = None
+
+        # 🧾 COMPRA DEL CHECKOUT: texto fijo, sin IA, sin anti-spam ni límite de 6 msgs
+        if not es_audio:
+            respuesta_compra = respuesta_compra_checkout(texto_cliente)
+            if respuesta_compra:
+                db.obtener_o_crear_lead(telefono_cliente, telefono_bot_receptor)
+                enviar_mensaje_whatsapp(telefono_cliente, respuesta_compra, telefono_bot_receptor)
+                db.guardar_historial_lead(telefono_cliente, texto_cliente, respuesta_compra)
+                print(f"🧾 Compra del checkout confirmada con texto fijo a {telefono_cliente} (sin IA).")
+                return
 
         resultado_sofia = evaluar_mensaje_sofia(
             remitente=telefono_cliente,
