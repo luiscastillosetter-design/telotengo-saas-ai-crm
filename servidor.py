@@ -17,7 +17,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 # =====================================================================
 load_dotenv("seguridad.env")
 from logica_sofia import evaluar_mensaje_sofia
-from anti_spam import respuesta_anti_spam, limite_ia_alcanzado, MENSAJE_LIMITE, respuesta_compra_checkout
+from anti_spam import (respuesta_anti_spam, limite_ia_alcanzado, es_ultimo_mensaje_permitido, MENSAJE_LIMITE,
+                       AVISO_ULTIMO_MENSAJE, MSG_FALLO_IA, respuesta_compra_checkout)
 from catalogo_todomax import bloque_catalogo_vivo
 from rutas import EN_VERCEL, ruta_escribible
 
@@ -133,9 +134,15 @@ def cargar_config():
 # 5. PROMPT MAESTRO V5
 # =====================================================================
 SYSTEM_PROMPT_SOFIA = """ROL E IDENTIDAD
-Eres Sofía, asesora de ventas de Importadora TodoMax (https://www.importadoratodomax.com), tienda en línea de Venezuela. Conoces ÚNICA Y EXCLUSIVAMENTE el entorno de importadoratodomax.com: su catálogo en vivo, métodos de pago, ofertas, carrito, pasos de compra y uso de la página. Español cálido, directo y breve (máximo 5-6 líneas, UNA pregunta por mensaje, pocos emojis).
+Eres Sofía, asesora de ventas de Importadora TodoMax (https://www.importadoratodomax.com), tienda en línea de Venezuela. Conoces ÚNICA Y EXCLUSIVAMENTE el entorno de importadoratodomax.com: su catálogo en vivo, métodos de pago, ofertas, carrito, pasos de compra y uso de la página. Español cálido, natural y cercano, directo y breve (máximo 5-6 líneas, UNA pregunta por mensaje, pocos emojis).
+
+IDENTIDAD 100% HUMANA: eres una persona del equipo de ventas. NUNCA digas ni insinúes que eres un bot, un asistente virtual, un programa o una inteligencia artificial. Si te lo preguntan, responde con naturalidad que eres Sofía, del equipo de TodoMax, y reencamina la conversación.
 
 REGLAS OBLIGATORIAS (CERO ALUCINACIONES)
+- Si el cliente SOLO saluda (hola, buenas, etc.) o no menciona ningún producto, saluda con calidez y pregúntale qué necesita. PROHIBIDO ofrecer, sugerir o nombrar cualquier producto que el cliente no haya pedido.
+- Si piden el catálogo, ver productos o qué venden: responde con calidez y envía SIEMPRE https://www.importadoratodomax.com
+- Nunca pidas "número de referencia" ni "detalles del pedido" para "procesar una compra". Las compras se hacen en la web.
+- Si el cliente pregunta por el estatus, estado o trámite de su pedido: NO inventes datos; dile con calidez que para consultarlo se comunique con administración y entrega https://wa.me/584225160056
 - Usa ÚNICAMENTE los productos, precios y enlaces del CATÁLOGO EN VIVO (JSON real de https://www.importadoratodomax.com/api/products) que aparece al final de este mensaje. Nunca inventes productos, modelos, precios, descuentos, stock, enlaces ni respuestas fuera de importadoratodomax.com.
 - Si el cliente pide algo que NO existe en el catálogo, dilo con claridad ("no lo tenemos disponible ahora"), sugiere lo más parecido que SÍ esté en el catálogo y envía a https://www.importadoratodomax.com. Si el catálogo no está disponible, no menciones productos ni precios y envía a la web.
 - Todo enlace de producto debe ser exactamente el "Enlace" del catálogo (https://www.importadoratodomax.com/product/{id}); jamás construyas ni modifiques un id.
@@ -149,7 +156,7 @@ CÓMO COMPRAR (pasos)
 1) Entra a https://www.importadoratodomax.com y busca o abre el producto. 2) En la ficha elige color/cantidad y pulsa "Agregar al Carrito" (o "Comprar ahora"). 3) Abre el carrito y revisa tu pedido. 4) Ve al checkout, completa tus datos de envío y elige el método de pago. 5) Realiza el pago, escribe el número de referencia y adjunta el comprobante. 6) Confirma el pedido: al final se abre WhatsApp para finalizar la atención con el equipo.
 
 MÉTODOS DE PAGO (en el checkout)
-Pago Móvil, Transferencia, Zelle, Binance Pay y Efectivo. Cada producto indica en su ficha cuáles acepta. Los datos de la cuenta (banco, teléfono, correo, Pay ID) se muestran en el checkout al elegir el método: NO los inventes ni los des tú. Excepto Efectivo, todos requieren referencia y comprobante.
+Pago Móvil, Transferencia, Zelle, Binance Pay y Efectivo. Cada producto indica en su ficha cuáles acepta. Los datos de la cuenta (banco, teléfono, correo, Pay ID) se muestran en el checkout al elegir el método: NO los inventes ni los des tú. Si piden datos de Pago Móvil, Binance o Zelle, explica que los datos oficiales aparecen en el checkout al elegir el método e invítalos SIEMPRE a completar su pedido en https://www.importadoratodomax.com enviando el enlace. Excepto Efectivo, todos requieren referencia y comprobante.
 Envío gratis en compras desde $50. Empresas de envío: MRW, Zoom, Tealca, Delivery Local y Retiro en Tienda.
 
 COMPRAS YA REALIZADAS (REGLA ESTRICTA)
@@ -317,7 +324,7 @@ ANTHROPIC_VERSION = "2023-06-01"
 def _llamar_anthropic(system_prompt, mensajes_chat):
     if not ANTHROPIC_API_KEY:
         registrar_log_sistema("ERROR", "ANTHROPIC_API_KEY no está configurada en seguridad.env")
-        return "Estoy teniendo un inconveniente técnico. Un asesor de Todomax te atenderá en breve."
+        return MSG_FALLO_IA
 
     headers = {
         "x-api-key": ANTHROPIC_API_KEY,
@@ -348,7 +355,7 @@ def _llamar_anthropic(system_prompt, mensajes_chat):
             registrar_log_sistema("ERROR", f"Anthropic HTTP {res.status_code}: {res.text[:200]}")
     except Exception as e:
         registrar_log_sistema("ERROR", f"Fallo al contactar Anthropic: {e}")
-    return "Tuve un pequeño inconveniente técnico. ¿Podrías repetirme eso último?"
+    return MSG_FALLO_IA
 
 def generar_respuesta_ia(mensaje_usuario, historial, prompt_maestro, telefono_cliente):
     """Arma el historial (roles alternados, empezando por 'user') y consulta a Haiku."""
@@ -376,39 +383,6 @@ def generar_respuesta_ia(mensaje_usuario, historial, prompt_maestro, telefono_cl
 # =====================================================================
 # 8. SEGUNDO PLANO: REVISIÓN DE INACTIVIDAD Y REPORTES TELEGRAM
 # =====================================================================
-def tarea_verificar_inactividad_24h():
-    print("⏰ [Scheduler] Ejecutando barrido de seguimiento 24h...")
-    try:
-        conn = db.get_db_connection()
-        conn.execute("PRAGMA journal_mode=WAL;")
-        cursor = conn.cursor()
-        hace_24h = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
-        cursor.execute("""
-            SELECT telefono, nombre FROM leads 
-            WHERE ultima_interaccion < ? AND estado_calificacion = 'Nuevo Prospecto'
-        """, (hace_24h,))
-        leads_inactivos = cursor.fetchall()
-        conn.close()
-
-        for lead in leads_inactivos:
-            tel, nom_referencia = lead
-            mensaje_seguimiento = "¡Hola! ¿Cómo estás? Te escribía por acá para ver si pudiste revisar lo que conversamos sobre las soluciones digitales para tu negocio. ¿Te quedó alguna duda? 🚀"
-            enviado = enviar_mensaje_whatsapp(tel, mensaje_seguimiento)
-            if enviado:
-                conn_upd = db.get_db_connection()
-                conn_upd.execute("PRAGMA journal_mode=WAL;")
-                cursor_upd = conn_upd.cursor()
-                now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                cursor_upd.execute("""
-                    UPDATE leads SET estado_calificacion = 'Seguimiento 24h', ultima_interaccion = ? 
-                    WHERE telefono = ?
-                """, (now, tel))
-                conn_upd.commit()
-                conn_upd.close()
-                print(f"✅ Mensaje de seguimiento enviado automáticamente a: {tel}")
-    except Exception as e:
-        registrar_log_sistema("ERROR", f"Error en la tarea programada de seguimiento 24h: {e}")
-
 def tarea_asistente_ventas_telegram():
     """Genera un reporte diario de métricas y consejos de remarketing vía Telegram."""
     print("⏰ [Scheduler] Analizando métricas para el reporte de Telegram...")
@@ -438,7 +412,6 @@ def tarea_asistente_ventas_telegram():
 
 if not EN_VERCEL:  # Serverless: no hay procesos en segundo plano persistentes
     scheduler = BackgroundScheduler()
-    scheduler.add_job(tarea_verificar_inactividad_24h, 'interval', hours=1)
     scheduler.add_job(tarea_asistente_ventas_telegram, 'cron', hour=18, minute=30)
     scheduler.start()
 
@@ -592,6 +565,10 @@ def procesar_mensaje_en_segundo_plane(telefono_cliente, texto_cliente, telefono_
             tiempo_espera = random.randint(5, 8)
             print(f"⏳ Simulando tiempo de lectura humana ({tiempo_espera}s)...")
             time.sleep(tiempo_espera)
+
+        # Último mensaje permitido: avisar con calidez y entregar el WhatsApp de administración
+        if es_ultimo_mensaje_permitido(telefono_cliente):
+            mensaje_para_lead = f"{mensaje_para_lead}{AVISO_ULTIMO_MENSAJE}"
 
         enviado = enviar_mensaje_whatsapp(telefono_cliente, mensaje_para_lead, telefono_bot_receptor)
 
