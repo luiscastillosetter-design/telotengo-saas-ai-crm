@@ -10,7 +10,6 @@ import re  # NUEVO: Para extraer el número de teléfono del cliente
 from flask import Flask, jsonify, request
 import requests
 from dotenv import load_dotenv
-from apscheduler.schedulers.background import BackgroundScheduler
 
 # =====================================================================
 # 1. CARGA DE SEGURIDAD Y MÓDULO DE SOFÍA
@@ -39,8 +38,6 @@ lock_global = threading.Lock()
 NUMERO_JEFE = os.getenv("NUMERO_JEFE", "")
 NUMERO_BOT_OFICIAL = os.getenv("NUMERO_BOT_OFICIAL", "")
 JARVIS_AUTH_TOKEN = os.getenv("JARVIS_AUTH_TOKEN", "")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # Anthropic (conexión directa, único proveedor de IA)
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
@@ -166,93 +163,8 @@ DERIVACIÓN A HUMANO (REGLA ESTRICTA)
 Si el cliente pide hablar con una persona, asesor, personal administrativo o soporte humano, entrega DE INMEDIATO el WhatsApp de la oficina/administración: +58 422-5160056, con su enlace directo https://wa.me/584225160056. NUNCA des el número +1 754-341-1559 (es el del bot) como contacto humano.
 
 ESCALAMIENTO A UN ASESOR HUMANO
-Si el cliente tiene un reclamo, pide hablar con una persona o confirmar un pago, responde primero con un mensaje amable y al final adjunta este bloque exacto (oculto para el cliente):
-
-[ALERTA_JEFE:
-Cliente: (nombre o teléfono)
-Motivo: (resumen breve del caso)]
+Si el cliente tiene un reclamo o quiere confirmar un pago, responde con calidez y entrégale el WhatsApp de administración https://wa.me/584225160056 (ellos verifican pagos y gestionan pedidos). No inventes confirmaciones de pago.
 """
-
-REGLAS_SISTEMA_CRM = """
-[IMPORTANTE PARA LA IA: NUNCA anuncies la alerta en el texto al cliente. El bloque ALERTA_JEFE va oculto y pegado al final de tu mensaje. Nunca envíes solo la alerta.]
-"""
-
-# =====================================================================
-# 5.5 INTEGRACIONES DE BASE DE DATOS LOCAL Y TELEGRAM
-# =====================================================================
-def notificar_telegram(mensaje, ruta_imagen=None):
-    """Envía notificaciones logísticas y comprobantes visuales al chat del Jefe en Telegram."""
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        registrar_log_sistema("WARNING", "Credenciales de Telegram no configuradas.")
-        return False
-    url_base = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
-    try:
-        if ruta_imagen and os.path.exists(ruta_imagen):
-            with open(ruta_imagen, 'rb') as foto:
-                requests.post(
-                    f"{url_base}/sendPhoto",
-                    data={"chat_id": TELEGRAM_CHAT_ID, "caption": mensaje, "parse_mode": "Markdown"},
-                    files={"photo": foto},
-                    timeout=15
-                )
-        else:
-            requests.post(
-                f"{url_base}/sendMessage",
-                json={"chat_id": TELEGRAM_CHAT_ID, "text": mensaje, "parse_mode": "Markdown"},
-                timeout=10
-            )
-        return True
-    except Exception as e:
-        registrar_log_sistema("ERROR", f"Error enviando a Telegram: {e}")
-        return False
-
-# 🔥 NUEVO: RADAR BIDIRECCIONAL DE TELEGRAM 🔥
-TELEGRAM_OFFSET = 0
-
-def hilo_escuchar_telegram():
-    global TELEGRAM_OFFSET
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return
-    
-    print("📡 Radar Bidireccional de Telegram ACTIVADO.")
-    url_base = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
-    
-    while True:
-        try:
-            res = requests.get(f"{url_base}/getUpdates?offset={TELEGRAM_OFFSET}&timeout=20", timeout=25)
-            if res.status_code == 200:
-                data = res.json()
-                for result in data.get("result", []):
-                    TELEGRAM_OFFSET = result["update_id"] + 1
-                    mensaje = result.get("message", {})
-                    
-                    # Verificar si es el jefe escribiendo en el chat autorizado
-                    if str(mensaje.get("chat", {}).get("id")) == TELEGRAM_CHAT_ID:
-                        # Verificar si está respondiendo a una alerta
-                        if "reply_to_message" in mensaje and "text" in mensaje:
-                            texto_respuesta_jefe = mensaje["text"]
-                            # Telegram puede tener el texto en 'text' o en 'caption' si fue una alerta con foto
-                            msg_original = mensaje["reply_to_message"]
-                            texto_original = msg_original.get("text", "") or msg_original.get("caption", "")
-                            
-                            # Buscar el número de teléfono con Expresiones Regulares
-                            match = re.search(r"\+(\d{10,15})", texto_original)
-                            if match:
-                                telefono_destino = match.group(1)
-                                
-                                # Extraer el bot receptor si está en tu BD, si no, usa default
-                                id_bot_meta = os.getenv("META_PHONE_ID", "")
-                                
-                                # Enviamos el mensaje del Jefe por WhatsApp
-                                exito = enviar_mensaje_whatsapp(telefono_destino, texto_respuesta_jefe, id_bot_meta)
-                                
-                                if exito:
-                                    notificar_telegram(f"✅ *Respuesta enviada al cliente (+{telefono_destino}):*\n_{texto_respuesta_jefe}_")
-                                else:
-                                    notificar_telegram(f"❌ Error intentando enviar mensaje a +{telefono_destino}")
-        except Exception:
-            pass # Ignoramos errores de red temporales para que el hilo no muera
-        time.sleep(2)
 
 # =====================================================================
 # 6. ENVÍO Y DESCARGA DE MENSAJES META GRAPH API
@@ -381,41 +293,6 @@ def generar_respuesta_ia(mensaje_usuario, historial, prompt_maestro, telefono_cl
     return _llamar_anthropic(prompt_maestro, mensajes_chat).strip()
 
 # =====================================================================
-# 8. SEGUNDO PLANO: REVISIÓN DE INACTIVIDAD Y REPORTES TELEGRAM
-# =====================================================================
-def tarea_asistente_ventas_telegram():
-    """Genera un reporte diario de métricas y consejos de remarketing vía Telegram."""
-    print("⏰ [Scheduler] Analizando métricas para el reporte de Telegram...")
-    try:
-        conn = sqlite3.connect(db.DB_PATH)
-        cursor = conn.cursor()
-        
-        hace_24h = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
-        cursor.execute("SELECT COUNT(*) FROM leads WHERE ultima_interaccion < ? AND estado_calificacion = 'Nuevo Prospecto'", (hace_24h,))
-        res = cursor.fetchone()
-        abandonos = res[0] if res else 0
-        
-        cursor.execute("CREATE TABLE IF NOT EXISTS ventas_cerradas (id INTEGER PRIMARY KEY, telefono TEXT, detalles TEXT, fecha DATETIME DEFAULT CURRENT_TIMESTAMP)")
-        cursor.execute("SELECT COUNT(*) FROM ventas_cerradas WHERE fecha > ?", (hace_24h,))
-        res2 = cursor.fetchone()
-        ventas_hoy = res2[0] if res2 else 0
-        conn.close()
-        
-        if abandonos > 0 or ventas_hoy > 0:
-            mensaje = f"🦈 *REPORTE DE VENTAS Y ESTRATEGIA (CRM)* 🦈\n\n"
-            mensaje += f"📦 *Ventas Cerradas (24h):* {ventas_hoy}\n"
-            mensaje += f"⚠️ *Carritos Abandonados:* {abandonos}\n\n"
-            mensaje += "💡 *Consejo Tiburón:* Revisa los prospectos inactivos en tu CRM y ofréceles atención directa para cerrar la venta."
-            notificar_telegram(mensaje)
-    except Exception as e:
-        registrar_log_sistema("ERROR", f"Error en reporte Telegram: {e}")
-
-if not EN_VERCEL:  # Serverless: no hay procesos en segundo plano persistentes
-    scheduler = BackgroundScheduler()
-    scheduler.add_job(tarea_asistente_ventas_telegram, 'cron', hour=18, minute=30)
-    scheduler.start()
-
-# =====================================================================
 # 9. PROCESAMIENTO ASÍNCRONO DE MENSAJES
 # =====================================================================
 def verificar_y_cobrar_conversacion_saas(empresa_id, telefono_cliente):
@@ -465,19 +342,6 @@ def procesar_mensaje_en_segundo_plane(telefono_cliente, texto_cliente, telefono_
     try:
         print(f"\n📩 Procesando en segundo plano mensaje de ({telefono_cliente}) para bot ID Meta ({telefono_bot_receptor}): {texto_cliente or '[Nota de Voz / Imagen]'}")
 
-        # 🔥 NUEVA LÓGICA: ENVÍO INMEDIATO DE LA IMAGEN A TELEGRAM 🔥
-        if es_imagen and ruta_media and os.path.exists(ruta_media):
-            print("📸 Imagen detectada. Disparando comprobante a Telegram de inmediato...")
-            mensaje_foto = f"📸 *NUEVO COMPROBANTE RECIBIDO*\n*WhatsApp Cliente:* +{telefono_cliente}\n\n_El cliente acaba de enviar esta imagen. Sofía continuará conversando si faltan datos del pedido._\n[Responder en WhatsApp](https://wa.me/{telefono_cliente})"
-            notificar_telegram(mensaje_foto, ruta_media)
-            
-            # Eliminamos la foto de la memoria para que no se envíe duplicada
-            try:
-                os.remove(ruta_media)
-            except Exception:
-                pass
-            ruta_media = None
-
         # 🧾 COMPRA DEL CHECKOUT: texto fijo, sin IA, sin anti-spam ni límite de 6 msgs
         if not es_audio:
             respuesta_compra = respuesta_compra_checkout(texto_cliente)
@@ -521,29 +385,19 @@ def procesar_mensaje_en_segundo_plane(telefono_cliente, texto_cliente, telefono_
             print(f"Limite de IA alcanzado para {telefono_cliente}: mensaje fijo (sin IA).")
             return
 
-        prompt_definitivo = f"{SYSTEM_PROMPT_SOFIA}\n\n{REGLAS_SISTEMA_CRM}\n\n{bloque_catalogo_vivo()}"
+        prompt_definitivo = f"{SYSTEM_PROMPT_SOFIA}\n\n{bloque_catalogo_vivo()}"
 
         # LOMITO SÚPER IMPORTANTE: Se inyecta el ID del bot receptor para aislar el Lead
         respuesta_bot_cruda = generar_respuesta_ia(texto_cliente, historial, prompt_definitivo, telefono_cliente)
 
         mensaje_para_lead = respuesta_bot_cruda
-        mensaje_telegram_alerta = None
 
-        # -----------------------------------------------------
-        # 🧩 ENRUTAMIENTO DE ALERTAS (AHORA A TELEGRAM Y CRM)
-        # -----------------------------------------------------
-        if respuesta_bot_cruda and "ALERTA_JEFE:" in respuesta_bot_cruda:
-            separador = "[ALERTA_JEFE:" if "[ALERTA_JEFE:" in respuesta_bot_cruda else "ALERTA_JEFE:"
-            partes = respuesta_bot_cruda.split(separador)
-            mensaje_para_lead = partes[0].strip()
-            
+        # Defensa: si el modelo emite un bloque interno [ALERTA_JEFE: ...], nunca llega al cliente
+        if mensaje_para_lead and "ALERTA_JEFE:" in mensaje_para_lead:
+            separador = "[ALERTA_JEFE:" if "[ALERTA_JEFE:" in mensaje_para_lead else "ALERTA_JEFE:"
+            mensaje_para_lead = mensaje_para_lead.split(separador)[0].strip()
             if not mensaje_para_lead:
-                mensaje_para_lead = "¡Perfecto! Ya tengo todos tus datos y la disponibilidad. Le paso la información al equipo de inmediato y se comunicarán contigo para confirmar. 🚀"
-                
-            if len(partes) > 1:
-                alerta_sucia = partes[1].replace("]", "").replace("[", "").strip()
-                mensaje_telegram_alerta = f"🚨 *CLIENTE REQUIERE ASESOR (TODOMAX)*\n*WhatsApp Cliente:* +{telefono_cliente}\n\n{alerta_sucia}\n\n[Responder en WhatsApp](https://wa.me/{telefono_cliente})"
-
+                mensaje_para_lead = MSG_FALLO_IA
 
         # 🔥 LÓGICA DE LIMPIEZA TOTAL DE MULETILLAS Y BASURA FINAL 🔥
         muletillas_borrar = [
@@ -574,14 +428,6 @@ def procesar_mensaje_en_segundo_plane(telefono_cliente, texto_cliente, telefono_
 
         db.guardar_historial_lead(telefono_cliente, texto_cliente, mensaje_para_lead)
         print(f"🤖 Respuesta enviada y guardada: {mensaje_para_lead}")
-
-        if mensaje_telegram_alerta:
-            print(f"📲 Notificando a TELEGRAM sobre el escalamiento a asesor...")
-            exito_telegram = notificar_telegram(mensaje_telegram_alerta, ruta_media)
-            if exito_telegram:
-                print("✅ Notificación enviada a Telegram con éxito.")
-            else:
-                print("❌ ERROR enviando la alerta a Telegram.")
 
     except Exception as e:
         registrar_log_sistema("ERROR", f"Error en hilo de procesamiento: {e}")
@@ -812,9 +658,6 @@ def orden_jarvis():
 # 13. INICIO DEL SERVIDOR
 # =====================================================================
 if __name__ == "__main__":
-    # 🔥 INICIAMOS EL RADAR DE TELEGRAM 🔥
-    threading.Thread(target=hilo_escuchar_telegram, daemon=True).start()
-
     print("==========================================================")
     print("🚀 SERVIDOR TELOTENGO SOLUTIONS (CASCADA 7 NIVELES & SOFÍA) LISTO")
     print("==========================================================")
