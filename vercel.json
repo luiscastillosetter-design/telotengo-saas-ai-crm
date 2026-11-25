@@ -1,5 +1,5 @@
 {
   "version": 2,
-  "builds": [{ "src": "servidor.py", "use": "@vercel/python" }],
+  "builds": [{ "src": "servidor.py", "use": "@vercel/python", "config": { "maxDuration": 60 } }],
   "routes": [{ "src": "/(.*)", "dest": "servidor.py" }]
 }

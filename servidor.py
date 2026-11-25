@@ -180,7 +180,7 @@ def enviar_mensaje_whatsapp(telefono_destino, mensaje_texto, telefono_bot=None):
         registrar_log_sistema("ERROR", msg_err)
         return False
 
-    url = f"https://graph.facebook.com/v17.0/{phone_number_id}/messages"
+    url = f"https://graph.facebook.com/v21.0/{phone_number_id}/messages"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
@@ -213,7 +213,7 @@ def descargar_multimedia_whatsapp(media_id, telefono_bot=None, extension=".ogg")
     if not token or not media_id:
         return None
     try:
-        url_meta = f"https://graph.facebook.com/v17.0/{media_id}"
+        url_meta = f"https://graph.facebook.com/v21.0/{media_id}"
         headers = {"Authorization": f"Bearer {token}"}
         res_info = requests.get(url_meta, headers=headers, timeout=10)
         if res_info.status_code == 200:
@@ -248,17 +248,11 @@ def _llamar_anthropic(system_prompt, mensajes_chat):
     payload = {
         "model": ANTHROPIC_MODEL,
         "max_tokens": 500,
-        "temperature": 0.1,
         "system": system_prompt,
         "messages": mensajes_chat,
     }
     try:
         res = requests.post(ANTHROPIC_URL, headers=headers, json=payload, timeout=25)
-        # Los modelos Haiku 5.x rechazan 'temperature' (HTTP 400 "deprecated"): reintento sin ese parámetro
-        if res.status_code == 400 and "temperature" in res.text.lower():
-            registrar_log_sistema("WARNING", "Anthropic rechazó 'temperature' para este modelo; reintentando sin ese parámetro")
-            payload.pop("temperature", None)
-            res = requests.post(ANTHROPIC_URL, headers=headers, json=payload, timeout=25)
         if res.status_code == 200:
             data = res.json()
             texto = "".join(b.get("text", "") for b in data.get("content", []) if b.get("type") == "text").strip()
