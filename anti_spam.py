@@ -76,6 +76,11 @@ def es_ultimo_mensaje_permitido(telefono):
     """True si el uso de IA recién consumido es el último permitido en la ventana."""
     import time
     import gestor_basedatos as db
+    import supabase_store
+    if supabase_store.habilitado():
+        usados = supabase_store.usos_ia(telefono, VENTANA_HORAS)
+        if usados is not None:
+            return usados >= LIMITE_MENSAJES_IA
     desde = time.time() - VENTANA_HORAS * 3600
     conn = db.get_db_connection()
     try:

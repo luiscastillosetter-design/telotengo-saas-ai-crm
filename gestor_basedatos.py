@@ -4,6 +4,7 @@ from datetime import datetime
 import os
 
 from rutas import ruta_escribible
+import supabase_store  # persistencia en Supabase (si hay credenciales); SQLite queda de respaldo
 
 DB_PATH = ruta_escribible("crm_telotengo.db")
 
@@ -88,6 +89,10 @@ inicializar_bd()
 def consumir_cupo_ia(telefono, limite=6, ventana_horas=24):
     """Registra un uso de IA. Devuelve False (sin registrar) si ya alcanzó el límite en la ventana."""
     import time
+    if supabase_store.habilitado():
+        res = supabase_store.consumir_cupo_ia(telefono, limite, ventana_horas)
+        if res is not None:
+            return res
     ahora = time.time()
     desde = ahora - ventana_horas * 3600
     conn = get_db_connection()
@@ -180,7 +185,7 @@ def obtener_o_crear_lead(telefono, bot_phone_id=None):
             conn.commit()
         historial = json.loads(resultado[0])
         conn.close()
-        return historial
+        return _historial_supabase_o(telefono, historial)
     else:
         historial_vacio = []
         fecha_actual = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -190,9 +195,19 @@ def obtener_o_crear_lead(telefono, bot_phone_id=None):
         ''', (telefono, json.dumps(historial_vacio), fecha_actual, fecha_actual, bot_phone_id))
         conn.commit()
         conn.close()
-        return historial_vacio
+        return _historial_supabase_o(telefono, historial_vacio)
+
+def _historial_supabase_o(telefono, respaldo):
+    """Historial desde Supabase si está configurado y responde; si no, el de SQLite."""
+    if supabase_store.habilitado():
+        h = supabase_store.obtener_historial(telefono)
+        if h is not None:
+            return h
+    return respaldo
 
 def guardar_historial_lead(telefono, mensaje_usuario, respuesta_bot):
+    if supabase_store.habilitado():
+        supabase_store.guardar_historial(telefono, mensaje_usuario, respuesta_bot)
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT historial_chat FROM leads WHERE telefono = ?", (telefono,))
@@ -294,6 +309,10 @@ def verificar_empresa_saas(telefono):
 # 4. SEGURIDAD Y LOGS
 # ==========================================
 def mensaje_ya_procesado(msg_id):
+    if supabase_store.habilitado():
+        res = supabase_store.mensaje_ya_procesado(msg_id)
+        if res is not None:
+            return res
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT msg_id FROM webhook_logs WHERE msg_id = ?", (msg_id,))
