@@ -1,4 +1,4 @@
-"""Catálogo en vivo de importadoratodomax.com (caché en memoria de 10 min) y tasa BCV."""
+"""Catálogo en vivo de importadoratodomax.com (lectura en tiempo real, sin caché) y tasa BCV."""
 import threading
 import time
 
@@ -6,11 +6,10 @@ import requests
 
 URL_TIENDA = "https://www.importadoratodomax.com"
 URL_API_PRODUCTOS = f"{URL_TIENDA}/api/products"
-TTL_CATALOGO = 600  # 10 minutos
+TIMEOUT_CATALOGO = 5  # segundos, lectura en vivo
 TTL_BCV = 900
 
 _lock = threading.Lock()
-_cache = {"ts": 0.0, "productos": []}
 _cache_bcv = {"ts": 0.0, "dato": None}
 
 _FUENTES_BCV = [
@@ -24,29 +23,76 @@ def enlace_producto(pid):
 
 
 def obtener_productos():
-    """Productos con stock. Usa caché 10 min; si la API falla devuelve el último caché válido."""
-    with _lock:
-        if _cache["productos"] and time.time() - _cache["ts"] < TTL_CATALOGO:
-            return _cache["productos"]
-        try:
-            r = requests.get(URL_API_PRODUCTOS, timeout=8)
-            r.raise_for_status()
-            datos = r.json()
-            if isinstance(datos, list):
-                _cache["productos"] = [p for p in datos if isinstance(p, dict) and p.get("id") and (p.get("stock") or 0) > 0]
-                _cache["ts"] = time.time()
-                print(f"✅ Catálogo en vivo: {len(_cache['productos'])} productos con stock ({len(datos)} totales)")
-            else:
-                print(f"⚠️ Catálogo: la API devolvió {type(datos).__name__} en vez de lista: {str(datos)[:150]}")
-        except requests.exceptions.Timeout:
-            print(f"⚠️ Catálogo: timeout (8s) consultando {URL_API_PRODUCTOS}")
-        except requests.exceptions.HTTPError as e:
-            print(f"⚠️ Catálogo: HTTP {e.response.status_code} desde {URL_API_PRODUCTOS}")
-        except ValueError as e:
-            print(f"⚠️ Catálogo: JSON inválido desde {URL_API_PRODUCTOS}: {e}")
-        except Exception as e:
-            print(f"⚠️ No se pudo consultar el catálogo en vivo ({type(e).__name__}): {e}")
-        return _cache["productos"]
+    """Productos con stock, consultados EN VIVO en cada llamada (sin caché). Si la red falla devuelve []."""
+    try:
+        r = requests.get(URL_API_PRODUCTOS, timeout=TIMEOUT_CATALOGO)
+        r.raise_for_status()
+        datos = r.json()
+        if not isinstance(datos, list):
+            print(f"⚠️ Catálogo: la API devolvió {type(datos).__name__} en vez de lista")
+            return []
+        return [p for p in datos if isinstance(p, dict) and p.get("id") and (p.get("stock") or 0) > 0]
+    except requests.exceptions.Timeout:
+        print(f"⚠️ Catálogo: timeout ({TIMEOUT_CATALOGO}s) consultando la API de productos")
+    except requests.exceptions.HTTPError as e:
+        print(f"⚠️ Catálogo: HTTP {e.response.status_code} desde la API de productos")
+    except ValueError as e:
+        print(f"⚠️ Catálogo: JSON inválido desde la API de productos: {e}")
+    except Exception as e:
+        print(f"⚠️ No se pudo consultar el catálogo en vivo ({type(e).__name__}): {e}")
+    return []
+
+
+def _num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _nombres(lista):
+    out = []
+    for x in lista or []:
+        n = x.get("name") if isinstance(x, dict) else x
+        if n:
+            out.append(str(n).strip())
+    return out
+
+
+def _tallas_con_stock(p):
+    """Tallas con stock real > 0 (sizeStock dict/lista o variantes); sin datos de stock usa 'sizes'."""
+    ss = p.get("sizeStock")
+    tallas = []
+    if isinstance(ss, dict) and ss:
+        for k, v in ss.items():
+            if isinstance(v, dict):  # {color: {talla: n}}
+                tallas += [t for t, n in v.items() if _num(n) > 0]
+            elif _num(v) > 0:
+                tallas.append(k)
+    elif isinstance(ss, list) and ss:
+        for it in ss:
+            if isinstance(it, dict):
+                t = it.get("size") or it.get("talla") or it.get("name")
+                if t and _num(it.get("stock", it.get("qty", 0))) > 0:
+                    tallas.append(t)
+    else:
+        vs = p.get("variants")
+        if isinstance(vs, list) and vs:
+            for it in vs:
+                if isinstance(it, dict) and it.get("size") and _num(it.get("stock", 0)) > 0:
+                    tallas.append(it["size"])
+        else:
+            tallas = _nombres(p.get("sizes"))
+    return list(dict.fromkeys(str(t) for t in tallas))
+
+
+def _colores_con_stock(p):
+    colores = _nombres(p.get("colors"))
+    vs = p.get("variants")
+    if isinstance(vs, list) and vs:
+        con_stock = {str(it.get("color")) for it in vs if isinstance(it, dict) and it.get("color") and _num(it.get("stock", 0)) > 0}
+        colores = [c for c in colores if c in con_stock] if colores else sorted(con_stock)
+    return colores
 
 
 def obtener_tasa_bcv():
@@ -99,8 +145,17 @@ def bloque_catalogo_vivo():
                 oferta = f" | OFERTA: antes ${pa} (-{round((1 - precio / pa) * 100)}%)"
             stock = p.get("stock", 0)
             disp = "Disponible" if stock > 5 else f"Últimas {stock} unidades"
+            div = _num(p.get("divisaPrice"))
+            divisa = f" | PRECIO EN DIVISAS ($): ${div:g} USD" if div > 0 and precio and div < _num(precio) else ""
+            colores = _colores_con_stock(p)
+            tallas = _tallas_con_stock(p)
+            extra = ""
+            if colores:
+                extra += f" | Colores con stock: {', '.join(colores)}"
+            if tallas:
+                extra += f" | Tallas con stock: {', '.join(tallas)}"
             filas.append(
-                f"- {p.get('title', '').strip()} | ${precio} USD{oferta} | {p.get('category', '')} | {disp} | "
+                f"- {p.get('title', '').strip()} | ${precio} USD{oferta}{divisa} | {p.get('category', '')} | {disp}{extra} | "
                 f"{_resumen(p.get('description'))} | Enlace: {enlace_producto(p['id'])}"
             )
         lista = "\n".join(filas)

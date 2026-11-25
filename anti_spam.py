@@ -5,7 +5,7 @@ import re
 import unicodedata
 
 URL_TIENDA = "https://www.importadoratodomax.com"
-URL_WHATSAPP_ADMIN = "https://wa.me/584225160056"  # WhatsApp oficial de administración (+58 422-5160056)
+URL_WHATSAPP_ADMIN = "https://wa.me/584225160057"  # WhatsApp oficial de administración (+58 422-5160057)
 
 # Respuestas fijas (cero IA, cero productos inventados). NUNCA piden "número de referencia".
 MSG_SALUDO = (
