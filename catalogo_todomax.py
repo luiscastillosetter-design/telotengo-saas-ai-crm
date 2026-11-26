@@ -1,16 +1,18 @@
 """Catálogo en vivo de importadoratodomax.com (lectura en tiempo real, sin caché) y tasa BCV."""
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 
 import requests
 
 URL_TIENDA = "https://www.importadoratodomax.com"
 URL_API_PRODUCTOS = f"{URL_TIENDA}/api/products"
 TIMEOUT_CATALOGO = 5  # segundos, lectura en vivo
-TTL_BCV = 900
+VET = timezone(timedelta(hours=-4))  # hora de Venezuela, fija
+INTERVALO_VENTANA_BCV = timedelta(minutes=20)
 
 _lock = threading.Lock()
-_cache_bcv = {"ts": 0.0, "dato": None}
+_cache_bcv = {"ts": None, "intento": None, "dato": None}
 
 _FUENTES_BCV = [
     ("https://ve.dolarapi.com/v1/dolares/oficial", lambda j: float(j.get("promedio") or j.get("venta"))),
@@ -96,20 +98,44 @@ def _colores_con_stock(p):
 
 
 def obtener_tasa_bcv():
-    """Tasa BCV (Bs por USD) con caché de 15 min, o None si no hay fuente disponible."""
-    if _cache_bcv["dato"] and time.time() - _cache_bcv["ts"] < TTL_BCV:
-        return _cache_bcv["dato"]
+    """Tasa BCV (Bs por USD), consultada solo cuando hace falta (ver _debe_consultar_bcv).
+
+    Si la consulta falla, conserva la última tasa válida en memoria (o None si nunca hubo).
+    """
+    ahora = datetime.now(VET)
+    with _lock:
+        if not _debe_consultar_bcv(ahora):
+            return _cache_bcv["dato"]
+        _cache_bcv["intento"] = ahora
     for url, extraer in _FUENTES_BCV:
         try:
             r = requests.get(url, timeout=5)
             if r.ok:
                 tasa = extraer(r.json())
                 if tasa > 0:
-                    _cache_bcv.update(ts=time.time(), dato=tasa)
+                    _cache_bcv.update(ts=ahora, dato=tasa)
                     return tasa
         except Exception:
             continue
     return _cache_bcv["dato"]
+
+
+def _debe_consultar_bcv(ahora):
+    """Política de consulta (hora VET). Llamar con _lock tomado."""
+    if not _cache_bcv["dato"]:
+        # Arranque en frío: sin tasa válida. Si el último intento falló, reintenta máx. cada 20 min.
+        ult = _cache_bcv["intento"]
+        return ult is None or ahora - ult >= INTERVALO_VENTANA_BCV
+    if ahora.weekday() >= 5:
+        return False  # fin de semana: reutiliza la tasa guardada
+    ini = ahora.replace(hour=16, minute=30, second=0, microsecond=0)
+    fin = ahora.replace(hour=17, minute=15, second=0, microsecond=0)
+    ult = _cache_bcv["intento"]
+    if ini <= ahora <= fin:
+        return ult is None or ahora - ult >= INTERVALO_VENTANA_BCV
+    if ahora > fin and (ult is None or ult < ini):
+        return True  # pasó la ventana sin consulta desde las 4:30 PM de hoy
+    return False
 
 
 def _resumen(texto, n=120):
